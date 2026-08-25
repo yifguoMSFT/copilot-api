@@ -4,6 +4,7 @@ import consola from "consola"
 import { streamSSE, type SSEMessage } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
+import { isModelAlias, resolveModelAlias } from "~/lib/model-aliases"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
@@ -15,9 +16,16 @@ import {
 } from "~/services/copilot/create-chat-completions"
 
 export async function handleCompletion(c: Context) {
+  const startedAt = Date.now()
   await checkRateLimit(state)
 
   let payload = await c.req.json<ChatCompletionsPayload>()
+  const requestedModel = payload.model
+  const shouldLogContent = isModelAlias(requestedModel)
+  if (shouldLogContent) {
+    consola.info(`${requestedModel} input:`, JSON.stringify(payload))
+  }
+  payload = { ...payload, model: resolveModelAlias(payload.model) }
   consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
 
   // Find the selected model
@@ -47,9 +55,20 @@ export async function handleCompletion(c: Context) {
     consola.debug("Set max_tokens to:", JSON.stringify(payload.max_tokens))
   }
 
+  let modelLabel = requestedModel
+  if (requestedModel !== payload.model) {
+    modelLabel = `${requestedModel} (${payload.model})`
+  }
+  consola.info(`Request sent to ${modelLabel}`)
   const response = await createChatCompletions(payload)
+  consola.info(
+    `Response received from ${modelLabel} in ${Date.now() - startedAt}ms`,
+  )
 
   if (isNonStreaming(response)) {
+    if (shouldLogContent) {
+      consola.info(`${requestedModel} output:`, JSON.stringify(response))
+    }
     consola.debug("Non-streaming response:", JSON.stringify(response))
     return c.json(response)
   }
@@ -57,6 +76,9 @@ export async function handleCompletion(c: Context) {
   consola.debug("Streaming response")
   return streamSSE(c, async (stream) => {
     for await (const chunk of response) {
+      if (shouldLogContent) {
+        consola.info(`${requestedModel} output:`, JSON.stringify(chunk))
+      }
       consola.debug("Streaming chunk:", JSON.stringify(chunk))
       await stream.writeSSE(chunk as SSEMessage)
     }
