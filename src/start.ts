@@ -25,6 +25,7 @@ interface RunServerOptions {
   claudeCode: boolean
   showToken: boolean
   proxyEnv: boolean
+  responsesStableItemIds: boolean
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -48,6 +49,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.rateLimitSeconds = options.rateLimit
   state.rateLimitWait = options.rateLimitWait
   state.showToken = options.showToken
+  state.responsesStableItemIds = options.responsesStableItemIds
 
   await ensurePaths()
   await cacheVSCodeVersion()
@@ -186,6 +188,11 @@ export const start = defineCommand({
       default: false,
       description: "Initialize proxy from environment variables",
     },
+    "responses-stable-item-ids": {
+      type: "boolean",
+      default: true,
+      description: "Stabilize Responses output item IDs",
+    },
   },
   run({ args }) {
     const rateLimitRaw = args["rate-limit"]
@@ -204,6 +211,7 @@ export const start = defineCommand({
       claudeCode: args["claude-code"],
       showToken: args["show-token"],
       proxyEnv: args["proxy-env"],
+      responsesStableItemIds: args["responses-stable-item-ids"],
     })
   },
 })

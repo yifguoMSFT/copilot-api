@@ -10,6 +10,7 @@ export interface State {
 
   manualApprove: boolean
   rateLimitWait: boolean
+  responsesStableItemIds: boolean
   showToken: boolean
   verbose: boolean
 
@@ -22,6 +23,7 @@ export const state: State = {
   accountType: "individual",
   manualApprove: false,
   rateLimitWait: false,
+  responsesStableItemIds: true,
   showToken: false,
   verbose: false,
 }

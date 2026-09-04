@@ -30,6 +30,7 @@ beforeEach(() => {
   state.manualApprove = false
   state.rateLimitSeconds = undefined
   state.rateLimitWait = false
+  state.responsesStableItemIds = true
   state.lastRequestTimestamp = undefined
 })
 
@@ -142,6 +143,40 @@ describe("Responses routes", () => {
     const response = await post("/v1/responses", '{"stream":true}')
 
     expect(response.headers.get("content-type")).toBe("text/event-stream")
+    expect(await response.text()).toBe(event)
+  })
+
+  test("normalizes item IDs by default", async () => {
+    const event =
+      'event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":0,"item":{"id":"first"}}\n\nevent: response.output_item.done\ndata: {"type":"response.output_item.done","output_index":0,"item":{"id":"last"}}\n\n'
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(event, {
+          headers: { "content-type": "text/event-stream" },
+        }),
+      ),
+    )
+    const response = await post("/v1/responses", '{"stream":true}')
+    const output = await response.text()
+
+    expect(output).toContain('"item":{"id":"first"}')
+    expect(output).not.toContain('"item":{"id":"last"}')
+  })
+
+  test("passes item IDs through when normalization is disabled", async () => {
+    const event =
+      'event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":0,"item":{"id":"first"}}\n\nevent: response.output_item.done\ndata: {"type":"response.output_item.done","output_index":0,"item":{"id":"last"}}\n\n'
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(event, {
+          headers: { "content-type": "text/event-stream" },
+        }),
+      ),
+    )
+    state.responsesStableItemIds = false
+
+    const response = await post("/v1/responses", '{"stream":true}')
+
     expect(await response.text()).toBe(event)
   })
 

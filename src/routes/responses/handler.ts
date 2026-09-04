@@ -8,6 +8,8 @@ import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { createResponses } from "~/services/copilot/create-responses"
 
+import { normalizeResponsesItemIds } from "./sse-item-id-normalizer"
+
 const forwardedResponseHeaders = [
   "cache-control",
   "content-type",
@@ -77,7 +79,16 @@ export async function handleResponse(c: Context): Promise<Response> {
     signalAborted: requestSignal.aborted,
   })
 
-  return new Response(upstream.body, {
+  let responseBody = upstream.body
+  if (
+    state.responsesStableItemIds
+    && responseBody !== null
+    && upstream.headers.get("content-type")?.includes("text/event-stream")
+  ) {
+    responseBody = normalizeResponsesItemIds(responseBody)
+  }
+
+  return new Response(responseBody, {
     status: upstream.status,
     statusText: upstream.statusText,
     headers,

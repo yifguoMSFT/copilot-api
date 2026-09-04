@@ -1,0 +1,188 @@
+{
+  "blueprint_path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.json",
+  "created_at": "2026-09-04T01:41:58Z",
+  "kind": "kanban-execution",
+  "runs": [
+    {
+      "completed_at": "2026-09-04T01:42:45Z",
+      "context_path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+      "context_snapshots": [
+        {
+          "content": "Verified the minimal transform against [[RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md]]. Runtime changes are limited to the default-off `--responses-stable-item-ids` flag, one route guard for SSE bodies, and a response-local `output_index` to first-ID map. No observer, telemetry, rollout, timeout, or reverse-mapping code remains; the unrelated timeout in `src/services/get-vscode-version.ts` predates this work.\n\nValidation on 2026-09-04: `bun test tests/responses-sse-item-id-normalizer.test.ts tests/responses-route.test.ts` passed 16 tests; `bun run typecheck` passed; focused ESLint passed with only the stale `baseline-browser-mapping` notice; `git diff --check` passed. Tests prove the disabled route remains exact raw passthrough, known lifecycle fields share the first ID, output indices are independent, one-byte chunking works, and unknown/malformed frames remain unchanged.",
+          "path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+          "timestamp": "2026-09-04T01:42:40Z"
+        },
+        {
+          "content": "Verified the minimal transform against [[RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md]]. Runtime changes are limited to the default-off `--responses-stable-item-ids` flag, one route guard for SSE bodies, and a response-local `output_index` to first-ID map. No observer, telemetry, rollout, timeout, or reverse-mapping code remains; the unrelated timeout in `src/services/get-vscode-version.ts` predates this work.\n\nValidation on 2026-09-04: `bun test tests/responses-sse-item-id-normalizer.test.ts tests/responses-route.test.ts` passed 16 tests; `bun run typecheck` passed; focused ESLint passed with only the stale `baseline-browser-mapping` notice; `git diff --check` passed. Tests prove the disabled route remains exact raw passthrough, known lifecycle fields share the first ID, output indices are independent, one-byte chunking works, and unknown/malformed frames remain unchanged.",
+          "path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+          "timestamp": "2026-09-04T01:42:43Z"
+        },
+        {
+          "content": "Verified the minimal transform against [[RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md]]. Runtime changes are limited to the default-off `--responses-stable-item-ids` flag, one route guard for SSE bodies, and a response-local `output_index` to first-ID map. No observer, telemetry, rollout, timeout, or reverse-mapping code remains; the unrelated timeout in `src/services/get-vscode-version.ts` predates this work.\n\nValidation on 2026-09-04: `bun test tests/responses-sse-item-id-normalizer.test.ts tests/responses-route.test.ts` passed 16 tests; `bun run typecheck` passed; focused ESLint passed with only the stale `baseline-browser-mapping` notice; `git diff --check` passed. Tests prove the disabled route remains exact raw passthrough, known lifecycle fields share the first ID, output indices are independent, one-byte chunking works, and unknown/malformed frames remain unchanged.",
+          "path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+          "timestamp": "2026-09-04T01:42:45Z"
+        }
+      ],
+      "latest_context_snapshot_at": "2026-09-04T01:42:45Z",
+      "owner": "agent",
+      "review_path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.review.md",
+      "run_id": "R-20260904T014205-e784c8",
+      "source_blueprint_updated_at": "2026-09-04T01:36:35Z",
+      "started_at": "2026-09-04T01:42:05Z",
+      "status": "done",
+      "task_id": "verify_the_minimal_stable-id_transform",
+      "task_view_path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.task.md",
+      "updated_at": "2026-09-04T01:42:45Z",
+      "updates": [
+        {
+          "action": "progress",
+          "summary": "Confirmed the implementation is limited to the default-off stable-ID transform and passed all focused verification.",
+          "timestamp": "2026-09-04T01:42:40Z"
+        },
+        {
+          "action": "transition",
+          "from": "running",
+          "reason": "focused-checks-passed",
+          "summary": "The minimal stable-ID transform is ready for final validation.",
+          "timestamp": "2026-09-04T01:42:43Z",
+          "to": "validating",
+          "verification": ""
+        },
+        {
+          "action": "transition",
+          "from": "validating",
+          "reason": "",
+          "summary": "Verified the minimal stable-ID transform and its raw passthrough behavior.",
+          "timestamp": "2026-09-04T01:42:45Z",
+          "to": "done",
+          "verification": "16 focused normalizer and route tests passed; strict TypeScript passed; focused ESLint passed with only the stale browser-data informational notice; git diff --check passed. Inspection confirmed no observer, experiment telemetry, rollout, timeout, or reverse-mapping code remains, and tests cover raw disabled passthrough, lifecycle normalization, independent output indices, one-byte chunking, and unknown/malformed passthrough."
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-09-04T01:47:04Z",
+      "context_path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+      "context_snapshots": [
+        {
+          "content": "Verified the minimal transform against [[RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md]]. Runtime changes are limited to the default-off `--responses-stable-item-ids` flag, one route guard for SSE bodies, and a response-local `output_index` to first-ID map. No observer, telemetry, rollout, timeout, or reverse-mapping code remains; the unrelated timeout in `src/services/get-vscode-version.ts` predates this work.\n\nValidation on 2026-09-04: `bun test tests/responses-sse-item-id-normalizer.test.ts tests/responses-route.test.ts` passed 16 tests; `bun run typecheck` passed; focused ESLint passed with only the stale `baseline-browser-mapping` notice; `git diff --check` passed. Tests prove the disabled route remains exact raw passthrough, known lifecycle fields share the first ID, output indices are independent, one-byte chunking works, and unknown/malformed frames remain unchanged.\n\nRan the paired experiment against raw port 4141 and normalized port 4142. Three direct HTTP trials per model and mode all returned `OK`, nine events, and monotonic sequence `0..8`. Raw trials had seven item references with seven unique IDs; normalized trials retained seven references with one unique ID.\n\nRan three disposable Codex CLI 0.149.1 processes per model and mode. Every trial emitted exactly one completed `OK` item and persisted exactly one `event_msg/item_completed` AgentMessage plus one same-ID `response_item/message` assistant envelope. The missing-start correlation warning appeared in all six raw trials and none of the six normalized trials. Unrelated plugin authorization, manifest, PowerShell snapshot, and occasional rollout flush warnings were not mode-specific.\n\nNo same-state Desktop rendering A/B was available: changing the active Desktop provider endpoint requires reconfiguration/restart and would terminate this Kanban task. The matrix proves wire normalization and client lifecycle correlation, but not rendering causality.",
+          "path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+          "timestamp": "2026-09-04T01:46:58Z"
+        },
+        {
+          "content": "Verified the minimal transform against [[RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md]]. Runtime changes are limited to the default-off `--responses-stable-item-ids` flag, one route guard for SSE bodies, and a response-local `output_index` to first-ID map. No observer, telemetry, rollout, timeout, or reverse-mapping code remains; the unrelated timeout in `src/services/get-vscode-version.ts` predates this work.\n\nValidation on 2026-09-04: `bun test tests/responses-sse-item-id-normalizer.test.ts tests/responses-route.test.ts` passed 16 tests; `bun run typecheck` passed; focused ESLint passed with only the stale `baseline-browser-mapping` notice; `git diff --check` passed. Tests prove the disabled route remains exact raw passthrough, known lifecycle fields share the first ID, output indices are independent, one-byte chunking works, and unknown/malformed frames remain unchanged.\n\nRan the paired experiment against raw port 4141 and normalized port 4142. Three direct HTTP trials per model and mode all returned `OK`, nine events, and monotonic sequence `0..8`. Raw trials had seven item references with seven unique IDs; normalized trials retained seven references with one unique ID.\n\nRan three disposable Codex CLI 0.149.1 processes per model and mode. Every trial emitted exactly one completed `OK` item and persisted exactly one `event_msg/item_completed` AgentMessage plus one same-ID `response_item/message` assistant envelope. The missing-start correlation warning appeared in all six raw trials and none of the six normalized trials. Unrelated plugin authorization, manifest, PowerShell snapshot, and occasional rollout flush warnings were not mode-specific.\n\nNo same-state Desktop rendering A/B was available: changing the active Desktop provider endpoint requires reconfiguration/restart and would terminate this Kanban task. The matrix proves wire normalization and client lifecycle correlation, but not rendering causality.",
+          "path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+          "timestamp": "2026-09-04T01:47:02Z"
+        },
+        {
+          "content": "Verified the minimal transform against [[RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md]]. Runtime changes are limited to the default-off `--responses-stable-item-ids` flag, one route guard for SSE bodies, and a response-local `output_index` to first-ID map. No observer, telemetry, rollout, timeout, or reverse-mapping code remains; the unrelated timeout in `src/services/get-vscode-version.ts` predates this work.\n\nValidation on 2026-09-04: `bun test tests/responses-sse-item-id-normalizer.test.ts tests/responses-route.test.ts` passed 16 tests; `bun run typecheck` passed; focused ESLint passed with only the stale `baseline-browser-mapping` notice; `git diff --check` passed. Tests prove the disabled route remains exact raw passthrough, known lifecycle fields share the first ID, output indices are independent, one-byte chunking works, and unknown/malformed frames remain unchanged.\n\nRan the paired experiment against raw port 4141 and normalized port 4142. Three direct HTTP trials per model and mode all returned `OK`, nine events, and monotonic sequence `0..8`. Raw trials had seven item references with seven unique IDs; normalized trials retained seven references with one unique ID.\n\nRan three disposable Codex CLI 0.149.1 processes per model and mode. Every trial emitted exactly one completed `OK` item and persisted exactly one `event_msg/item_completed` AgentMessage plus one same-ID `response_item/message` assistant envelope. The missing-start correlation warning appeared in all six raw trials and none of the six normalized trials. Unrelated plugin authorization, manifest, PowerShell snapshot, and occasional rollout flush warnings were not mode-specific.\n\nNo same-state Desktop rendering A/B was available: changing the active Desktop provider endpoint requires reconfiguration/restart and would terminate this Kanban task. The matrix proves wire normalization and client lifecycle correlation, but not rendering causality.",
+          "path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+          "timestamp": "2026-09-04T01:47:04Z"
+        }
+      ],
+      "latest_context_snapshot_at": "2026-09-04T01:47:04Z",
+      "owner": "agent",
+      "review_path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.review.md",
+      "run_id": "R-20260904T014302-691404",
+      "source_blueprint_updated_at": "2026-09-04T01:36:45Z",
+      "started_at": "2026-09-04T01:43:02Z",
+      "status": "done",
+      "task_id": "run_the_paired_raw_and_normalized_experiment",
+      "task_view_path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.task.md",
+      "updated_at": "2026-09-04T01:47:04Z",
+      "updates": [
+        {
+          "action": "progress",
+          "summary": "Completed 12 direct and 12 disposable Codex paired trials; normalization reduced seven IDs to one and removed all missing-start warnings without changing logical output.",
+          "timestamp": "2026-09-04T01:46:58Z"
+        },
+        {
+          "action": "transition",
+          "from": "running",
+          "reason": "paired-matrix-complete",
+          "summary": "The paired raw and normalized matrix is complete and documented.",
+          "timestamp": "2026-09-04T01:47:02Z",
+          "to": "validating",
+          "verification": ""
+        },
+        {
+          "action": "transition",
+          "from": "validating",
+          "reason": "",
+          "summary": "Verified stable IDs repair Codex lifecycle correlation while Desktop rendering causality remains untested.",
+          "timestamp": "2026-09-04T01:47:04Z",
+          "to": "done",
+          "verification": "Direct matrix: three trials per model and mode, all HTTP 200 with OK, nine events, sequence 0..8, seven item references; raw had seven unique IDs and normalized had one. Disposable Codex CLI matrix: three trials per model and mode; all emitted one completed OK item and one same-ID transcript envelope pair; the missing-start warning appeared in 6/6 raw trials and 0/6 normalized trials. Same-state Desktop A/B was explicitly unavailable because endpoint reconfiguration/restart would terminate the active board task."
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-09-04T01:53:21Z",
+      "context_path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+      "context_snapshots": [
+        {
+          "content": "Verified the minimal transform against [[RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md]]. Runtime changes are limited to the default-off `--responses-stable-item-ids` flag, one route guard for SSE bodies, and a response-local `output_index` to first-ID map. No observer, telemetry, rollout, timeout, or reverse-mapping code remains; the unrelated timeout in `src/services/get-vscode-version.ts` predates this work.\n\nValidation on 2026-09-04: `bun test tests/responses-sse-item-id-normalizer.test.ts tests/responses-route.test.ts` passed 16 tests; `bun run typecheck` passed; focused ESLint passed with only the stale `baseline-browser-mapping` notice; `git diff --check` passed. Tests prove the disabled route remains exact raw passthrough, known lifecycle fields share the first ID, output indices are independent, one-byte chunking works, and unknown/malformed frames remain unchanged.\n\nRan the paired experiment against raw port 4141 and normalized port 4142. Three direct HTTP trials per model and mode all returned `OK`, nine events, and monotonic sequence `0..8`. Raw trials had seven item references with seven unique IDs; normalized trials retained seven references with one unique ID.\n\nRan three disposable Codex CLI 0.149.1 processes per model and mode. Every trial emitted exactly one completed `OK` item and persisted exactly one `event_msg/item_completed` AgentMessage plus one same-ID `response_item/message` assistant envelope. The missing-start correlation warning appeared in all six raw trials and none of the six normalized trials. Unrelated plugin authorization, manifest, PowerShell snapshot, and occasional rollout flush warnings were not mode-specific.\n\nNo same-state Desktop rendering A/B was available: changing the active Desktop provider endpoint requires reconfiguration/restart and would terminate this Kanban task. The matrix proves wire normalization and client lifecycle correlation, but not rendering causality.\n\nPrepared the causal decision as **inconclusive for Desktop rendering**. Stable IDs are causal for removing the Codex CLI missing-start warning (6/6 raw versus 0/6 normalized), but the required same-state Desktop raw/normalized rendering comparison is absent. Recommendation: keep the experiment disabled and authorize no further compatibility work until that A/B evidence exists.",
+          "path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+          "timestamp": "2026-09-04T01:48:03Z"
+        },
+        {
+          "content": "Verified the minimal transform against [[RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md]]. Runtime changes are limited to the default-off `--responses-stable-item-ids` flag, one route guard for SSE bodies, and a response-local `output_index` to first-ID map. No observer, telemetry, rollout, timeout, or reverse-mapping code remains; the unrelated timeout in `src/services/get-vscode-version.ts` predates this work.\n\nValidation on 2026-09-04: `bun test tests/responses-sse-item-id-normalizer.test.ts tests/responses-route.test.ts` passed 16 tests; `bun run typecheck` passed; focused ESLint passed with only the stale `baseline-browser-mapping` notice; `git diff --check` passed. Tests prove the disabled route remains exact raw passthrough, known lifecycle fields share the first ID, output indices are independent, one-byte chunking works, and unknown/malformed frames remain unchanged.\n\nRan the paired experiment against raw port 4141 and normalized port 4142. Three direct HTTP trials per model and mode all returned `OK`, nine events, and monotonic sequence `0..8`. Raw trials had seven item references with seven unique IDs; normalized trials retained seven references with one unique ID.\n\nRan three disposable Codex CLI 0.149.1 processes per model and mode. Every trial emitted exactly one completed `OK` item and persisted exactly one `event_msg/item_completed` AgentMessage plus one same-ID `response_item/message` assistant envelope. The missing-start correlation warning appeared in all six raw trials and none of the six normalized trials. Unrelated plugin authorization, manifest, PowerShell snapshot, and occasional rollout flush warnings were not mode-specific.\n\nNo same-state Desktop rendering A/B was available: changing the active Desktop provider endpoint requires reconfiguration/restart and would terminate this Kanban task. The matrix proves wire normalization and client lifecycle correlation, but not rendering causality.\n\nPrepared the causal decision as **inconclusive for Desktop rendering**. Stable IDs are causal for removing the Codex CLI missing-start warning (6/6 raw versus 0/6 normalized), but the required same-state Desktop raw/normalized rendering comparison is absent. Recommendation: keep the experiment disabled and authorize no further compatibility work until that A/B evidence exists.",
+          "path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+          "timestamp": "2026-09-04T01:48:07Z"
+        },
+        {
+          "content": "Verified the minimal transform against [[RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md]]. Runtime changes are limited to the default-off `--responses-stable-item-ids` flag, one route guard for SSE bodies, and a response-local `output_index` to first-ID map. No observer, telemetry, rollout, timeout, or reverse-mapping code remains; the unrelated timeout in `src/services/get-vscode-version.ts` predates this work.\n\nValidation on 2026-09-04: `bun test tests/responses-sse-item-id-normalizer.test.ts tests/responses-route.test.ts` passed 16 tests; `bun run typecheck` passed; focused ESLint passed with only the stale `baseline-browser-mapping` notice; `git diff --check` passed. Tests prove the disabled route remains exact raw passthrough, known lifecycle fields share the first ID, output indices are independent, one-byte chunking works, and unknown/malformed frames remain unchanged.\n\nRan the paired experiment against raw port 4141 and normalized port 4142. Three direct HTTP trials per model and mode all returned `OK`, nine events, and monotonic sequence `0..8`. Raw trials had seven item references with seven unique IDs; normalized trials retained seven references with one unique ID.\n\nRan three disposable Codex CLI 0.149.1 processes per model and mode. Every trial emitted exactly one completed `OK` item and persisted exactly one `event_msg/item_completed` AgentMessage plus one same-ID `response_item/message` assistant envelope. The missing-start correlation warning appeared in all six raw trials and none of the six normalized trials. Unrelated plugin authorization, manifest, PowerShell snapshot, and occasional rollout flush warnings were not mode-specific.\n\nNo same-state Desktop rendering A/B was available: changing the active Desktop provider endpoint requires reconfiguration/restart and would terminate this Kanban task. The matrix proves wire normalization and client lifecycle correlation, but not rendering causality.\n\nPrepared the causal decision as **inconclusive for Desktop rendering**. Stable IDs are causal for removing the Codex CLI missing-start warning (6/6 raw versus 0/6 normalized), but the required same-state Desktop raw/normalized rendering comparison is absent. Recommendation: keep the experiment disabled and authorize no further compatibility work until that A/B evidence exists.\n\nThe user then supplied the missing same-session Desktop comparison. Duplication continued in the affected session under raw mode. After restarting only `copilot-api` with `--responses-stable-item-ids` on the same endpoint, a direct probe reported nine events, sequence `0..8`, seven references, one unique ID, and `OK`; the user confirmed the following Codex response no longer duplicated. This changes the decision to **causal** for the observed Desktop rendering issue.",
+          "path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+          "timestamp": "2026-09-04T01:53:18Z"
+        },
+        {
+          "content": "Verified the minimal transform against [[RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md]]. Runtime changes are limited to the default-off `--responses-stable-item-ids` flag, one route guard for SSE bodies, and a response-local `output_index` to first-ID map. No observer, telemetry, rollout, timeout, or reverse-mapping code remains; the unrelated timeout in `src/services/get-vscode-version.ts` predates this work.\n\nValidation on 2026-09-04: `bun test tests/responses-sse-item-id-normalizer.test.ts tests/responses-route.test.ts` passed 16 tests; `bun run typecheck` passed; focused ESLint passed with only the stale `baseline-browser-mapping` notice; `git diff --check` passed. Tests prove the disabled route remains exact raw passthrough, known lifecycle fields share the first ID, output indices are independent, one-byte chunking works, and unknown/malformed frames remain unchanged.\n\nRan the paired experiment against raw port 4141 and normalized port 4142. Three direct HTTP trials per model and mode all returned `OK`, nine events, and monotonic sequence `0..8`. Raw trials had seven item references with seven unique IDs; normalized trials retained seven references with one unique ID.\n\nRan three disposable Codex CLI 0.149.1 processes per model and mode. Every trial emitted exactly one completed `OK` item and persisted exactly one `event_msg/item_completed` AgentMessage plus one same-ID `response_item/message` assistant envelope. The missing-start correlation warning appeared in all six raw trials and none of the six normalized trials. Unrelated plugin authorization, manifest, PowerShell snapshot, and occasional rollout flush warnings were not mode-specific.\n\nNo same-state Desktop rendering A/B was available: changing the active Desktop provider endpoint requires reconfiguration/restart and would terminate this Kanban task. The matrix proves wire normalization and client lifecycle correlation, but not rendering causality.\n\nPrepared the causal decision as **inconclusive for Desktop rendering**. Stable IDs are causal for removing the Codex CLI missing-start warning (6/6 raw versus 0/6 normalized), but the required same-state Desktop raw/normalized rendering comparison is absent. Recommendation: keep the experiment disabled and authorize no further compatibility work until that A/B evidence exists.\n\nThe user then supplied the missing same-session Desktop comparison. Duplication continued in the affected session under raw mode. After restarting only `copilot-api` with `--responses-stable-item-ids` on the same endpoint, a direct probe reported nine events, sequence `0..8`, seven references, one unique ID, and `OK`; the user confirmed the following Codex response no longer duplicated. This changes the decision to **causal** for the observed Desktop rendering issue.",
+          "path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.context.md",
+          "timestamp": "2026-09-04T01:53:21Z"
+        }
+      ],
+      "latest_context_snapshot_at": "2026-09-04T01:53:21Z",
+      "owner": "agent",
+      "review_path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.review.md",
+      "run_id": "R-20260904T014728-d0d40f",
+      "source_blueprint_updated_at": "2026-09-04T01:36:53Z",
+      "started_at": "2026-09-04T01:47:28Z",
+      "status": "done",
+      "task_id": "decide_whether_stable_ids_are_causal",
+      "task_view_path": "E:\\workshop\\copilot-api\\responses-stream-item-id-experiment.kanban.task.md",
+      "updated_at": "2026-09-04T01:53:21Z",
+      "updates": [
+        {
+          "action": "progress",
+          "summary": "Prepared the evidence-backed inconclusive decision: stable IDs fix CLI lifecycle correlation, but Desktop rendering causality remains unproven.",
+          "timestamp": "2026-09-04T01:48:03Z"
+        },
+        {
+          "action": "transition",
+          "from": "running",
+          "reason": "",
+          "review": "# Stable item-ID causal decision\n\n## Recommended decision\n\n**Inconclusive for Desktop double rendering. Do not ship or expand the compatibility transform yet.**\n\n## Evidence\n\n- Direct HTTP: 3 raw and 3 normalized trials for each of Sol and Sol Fast (12 total). Every trial returned `OK`, nine events, sequence `0..8`, and seven item references. Raw had seven unique IDs; normalized had one.\n- Disposable Codex CLI 0.149.1: 3 raw and 3 normalized trials for each model (12 total). Every trial emitted one completed `OK` item and one same-ID transcript envelope pair.\n- The Codex missing-start warning appeared in 6/6 raw trials and 0/6 normalized trials. Stable IDs are causal for lifecycle correlation.\n- No same-state Desktop raw/normalized A/B was possible because changing the active Desktop provider endpoint requires reconfiguration and restart, terminating this task.\n\n## Counter-evidence and limit\n\nOlder Codex sessions stored the same dual transcript envelopes without visible duplication. Therefore repairing lifecycle correlation does not prove the upgraded Desktop renderer will coalesce those envelopes. The plan explicitly requires repeated Desktop raw duplication and normalized single rendering before calling the rendering issue causal.\n\n## Review action\n\nConfirm the decision is **inconclusive** and leave the experiment off by default. A later user-coordinated Desktop A/B can reopen the decision; no additional parser, tool, continuation, telemetry, or rollout work is authorized by the current evidence.\n",
+          "summary": "The causal decision is ready for human review with an inconclusive recommendation.",
+          "timestamp": "2026-09-04T01:48:07Z",
+          "to": "review",
+          "verification": ""
+        },
+        {
+          "action": "progress",
+          "summary": "User confirmed the same affected Desktop session stopped duplicating after only copilot-api normalization was enabled, completing the causal A/B evidence.",
+          "timestamp": "2026-09-04T01:53:18Z"
+        },
+        {
+          "action": "transition",
+          "from": "review",
+          "reason": "",
+          "summary": "Human review confirmed stable item IDs are causal for the observed Desktop duplication.",
+          "timestamp": "2026-09-04T01:53:21Z",
+          "to": "done",
+          "verification": "Wire matrix showed 7 raw IDs versus 1 normalized ID with unchanged nine-event sequence and OK text; disposable CLI matrix showed the missing-start warning in 6/6 raw and 0/6 normalized trials with one logical item and one envelope pair each; the user confirmed the already-affected Desktop session duplicated in raw mode and rendered the next response once after only copilot-api normalized mode was enabled. The implementation remains default-off and broader rollout is out of scope."
+        }
+      ]
+    }
+  ],
+  "updated_at": "2026-09-04T01:53:32Z",
+  "version": 1
+}
