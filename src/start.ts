@@ -6,6 +6,7 @@ import consola from "consola"
 import { serve } from "srvx"
 import invariant from "tiny-invariant"
 
+import { refreshCodexModels } from "./lib/codex-models"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
@@ -52,6 +53,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.responsesStableItemIds = options.responsesStableItemIds
 
   await ensurePaths()
+  await refreshCodexModels()
   await cacheVSCodeVersion()
 
   if (options.githubToken) {
