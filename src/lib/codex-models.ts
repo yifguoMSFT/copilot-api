@@ -3,6 +3,8 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { z } from "zod"
 
+import { deepSeekCodexModels } from "~/providers/deepseek/models"
+
 import { HTTPError } from "./error"
 
 const CATALOG_URL =
@@ -12,31 +14,83 @@ const catalogSchema = z.looseObject({
   models: z.array(z.looseObject({ slug: z.string().min(1) })),
 })
 
+export interface CodexCatalogOptions {
+  outputFile: string
+  customFiles: Array<string>
+  upstreamCacheFile?: string
+  deepSeekModels?: Array<string>
+}
+
 export async function refreshCodexModels(
-  directory = "E:/workshop/copilot-api",
+  input: string | CodexCatalogOptions,
 ): Promise<void> {
-  const output = path.join(directory, "codex-models.json")
+  const legacy = typeof input === "string"
+  const output =
+    legacy ? path.join(input, "codex-models.json") : input.outputFile
+  const directory = path.dirname(output)
+  const customFiles =
+    legacy ? [path.join(input, "codex-models-custom.json")] : input.customFiles
+  const cacheFile =
+    legacy ? undefined : (
+      (input.upstreamCacheFile
+      ?? path.join(directory, "codex-models-upstream.json"))
+    )
   const temporary = `${output}.${process.pid}.tmp`
 
   try {
-    const customText = await fs.readFile(
-      path.join(directory, "codex-models-custom.json"),
-    )
-    const custom = catalogSchema.parse(JSON.parse(customText.toString("utf8")))
-    const response = await fetch(CATALOG_URL, {
-      signal: AbortSignal.timeout(10_000),
-    })
-    if (!response.ok) {
-      throw new HTTPError("Failed to fetch the Codex model catalog", response)
+    const customModels: Array<Record<string, unknown>> = []
+    for (const customPath of customFiles) {
+      const customText = await fs
+        .readFile(customPath)
+        .catch((error: unknown) => {
+          if (legacy && (error as NodeJS.ErrnoException).code === "ENOENT")
+            return undefined
+          throw error
+        })
+      if (customText !== undefined) {
+        customModels.push(
+          ...catalogSchema.parse(JSON.parse(customText.toString("utf8")))
+            .models,
+        )
+      }
     }
-    const upstream = catalogSchema.parse(await response.json())
+    let upstream: z.infer<typeof catalogSchema>
+    try {
+      const response = await fetch(CATALOG_URL, {
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!response.ok)
+        throw new HTTPError("Failed to fetch the Codex model catalog", response)
+      upstream = catalogSchema.parse(await response.json())
+      if (cacheFile !== undefined) {
+        await fs.mkdir(path.dirname(cacheFile), { recursive: true })
+        await fs.writeFile(cacheFile, `${JSON.stringify(upstream, null, 2)}\n`)
+      }
+    } catch (error) {
+      if (cacheFile === undefined) throw error
+      upstream = await fs
+        .readFile(cacheFile, "utf8")
+        .then((text) => catalogSchema.parse(JSON.parse(text)))
+        .catch(() => ({ models: [] }))
+      consola.warn(
+        "Could not refresh upstream Codex catalog; using local sources",
+        error,
+      )
+    }
+    const enabledDeepSeek =
+      legacy ?
+        []
+      : deepSeekCodexModels.filter((model) =>
+          input.deepSeekModels?.includes(String(model.slug)),
+        )
     const models = new Map(
-      [...upstream.models, ...custom.models].map((model) => [
+      [...upstream.models, ...enabledDeepSeek, ...customModels].map((model) => [
         model.slug,
         model,
       ]),
     )
 
+    await fs.mkdir(directory, { recursive: true })
     await fs.writeFile(
       temporary,
       `${JSON.stringify({ ...upstream, models: [...models.values()] }, null, 2)}\n`,

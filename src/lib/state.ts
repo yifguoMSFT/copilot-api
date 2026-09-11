@@ -1,5 +1,7 @@
 import type { ModelsResponse } from "~/services/copilot/get-models"
 
+import type { RuntimeConfig } from "./runtime-config"
+
 export interface State {
   githubToken?: string
   copilotToken?: string
@@ -7,6 +9,7 @@ export interface State {
   accountType: string
   models?: ModelsResponse
   vsCodeVersion?: string
+  runtimeConfig?: RuntimeConfig
 
   manualApprove: boolean
   rateLimitWait: boolean

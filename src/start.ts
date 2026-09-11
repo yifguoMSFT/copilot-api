@@ -9,6 +9,7 @@ import invariant from "tiny-invariant"
 import { refreshCodexModels } from "./lib/codex-models"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
+import { loadRuntimeConfig } from "./lib/runtime-config"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { setupCopilotToken, setupGitHubToken } from "./lib/token"
@@ -27,8 +28,11 @@ interface RunServerOptions {
   showToken: boolean
   proxyEnv: boolean
   responsesStableItemIds: boolean
+  configPath?: string
+  environment?: string
 }
 
+// eslint-disable-next-line max-lines-per-function
 export async function runServer(options: RunServerOptions): Promise<void> {
   state.verbose = options.verbose
 
@@ -52,19 +56,44 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.showToken = options.showToken
   state.responsesStableItemIds = options.responsesStableItemIds
 
-  await ensurePaths()
-  await refreshCodexModels()
-  await cacheVSCodeVersion()
-
-  if (options.githubToken) {
-    state.githubToken = options.githubToken
-    consola.info("Using provided GitHub token")
-  } else {
-    await setupGitHubToken()
+  const runtimeConfig = await loadRuntimeConfig({
+    configPath: options.configPath,
+    environment: options.environment,
+  })
+  state.runtimeConfig = runtimeConfig
+  if (runtimeConfig.providers.deepseek.enabled) {
+    const apiKey =
+      process.env[runtimeConfig.providers.deepseek.apiKeyEnv]?.trim()
+    if (!apiKey) {
+      throw new Error(
+        `Missing DeepSeek API key: ${runtimeConfig.providers.deepseek.apiKeyEnv}`,
+      )
+    }
   }
+  if (runtimeConfig.providers.copilot.enabled) await ensurePaths()
+  if (runtimeConfig.catalog.enabled) {
+    await refreshCodexModels({
+      outputFile: runtimeConfig.catalog.outputFile,
+      customFiles: runtimeConfig.catalog.customFiles,
+      deepSeekModels:
+        runtimeConfig.providers.deepseek.enabled ?
+          runtimeConfig.providers.deepseek.models
+        : [],
+    })
+  }
+  if (runtimeConfig.providers.copilot.enabled) {
+    await cacheVSCodeVersion()
 
-  await setupCopilotToken()
-  await cacheModels()
+    if (options.githubToken) {
+      state.githubToken = options.githubToken
+      consola.info("Using provided GitHub token")
+    } else {
+      await setupGitHubToken()
+    }
+
+    await setupCopilotToken()
+    await cacheModels()
+  }
 
   consola.info(
     `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
@@ -73,6 +102,9 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   const serverUrl = `http://localhost:${options.port}`
 
   if (options.claudeCode) {
+    if (!runtimeConfig.providers.copilot.enabled) {
+      throw new Error("Claude Code mode requires the Copilot provider")
+    }
     invariant(state.models, "Models should be loaded by now")
 
     const selectedModel = await consola.prompt(
@@ -195,6 +227,14 @@ export const start = defineCommand({
       default: true,
       description: "Stabilize Responses output item IDs",
     },
+    config: {
+      type: "string",
+      description: "Path to the copilot-api JSON configuration file",
+    },
+    env: {
+      type: "string",
+      description: "Configuration environment name",
+    },
   },
   run({ args }) {
     const rateLimitRaw = args["rate-limit"]
@@ -214,6 +254,8 @@ export const start = defineCommand({
       showToken: args["show-token"],
       proxyEnv: args["proxy-env"],
       responsesStableItemIds: args["responses-stable-item-ids"],
+      configPath: args.config,
+      environment: args.env,
     })
   },
 })

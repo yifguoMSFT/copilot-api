@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "defaults": {
+    "providers": {
+      "copilot": { "enabled": true },
+      "deepseek": {
+        "enabled": false,
+        "baseUrl": "https://api.deepseek.com",
+        "apiKeyEnv": "DEEPSEEK_API_KEY",
+        "models": ["deepseek-flash", "deepseek-v4-pro"]
+      }
+    },
+    "catalog": {
+      "enabled": true,
+      "customFiles": ["./codex-models-custom.json"],
+      "outputFile": "./generated/codex-models.json"
+    }
+  },
+  "environments": {
+    "development": {
+      "providers": { "deepseek": { "enabled": true } }
+    },
+    "docker": {
+      "catalog": {
+        "customFiles": ["/config/codex-models-custom.json"],
+        "outputFile": "/data/codex-models.json"
+      }
+    }
+  }
+}

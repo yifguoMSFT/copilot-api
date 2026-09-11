@@ -134,3 +134,24 @@ test("continues when offline on first startup without an existing catalog", asyn
   expect(warnMock).toHaveBeenCalledTimes(1)
   expect(await fs.readdir(directory)).toEqual(["codex-models-custom.json"])
 })
+
+test("explicit portable configuration can generate local DeepSeek metadata offline", async () => {
+  await fs.unlink(path.join(directory, "codex-models.json"))
+  fetchMock.mockRejectedValue(new TypeError("offline"))
+
+  await refreshCodexModels({
+    outputFile: path.join(directory, "generated", "models.json"),
+    customFiles: [path.join(directory, "codex-models-custom.json")],
+    upstreamCacheFile: path.join(directory, "upstream.json"),
+    deepSeekModels: ["deepseek-flash"],
+  })
+
+  const generated = JSON.parse(
+    // eslint-disable-next-line unicorn/prefer-json-parse-buffer
+    await fs.readFile(path.join(directory, "generated", "models.json"), "utf8"),
+  ) as { models: Array<{ slug: string }> }
+  expect(generated.models.map((model) => model.slug)).toEqual([
+    "deepseek-flash",
+    "sol-fast",
+  ])
+})

@@ -59,19 +59,31 @@ bun install
 
 ## Codex model catalog
 
-On startup, copilot-api fetches the [upstream Codex model catalog](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json) from its [raw URL](https://raw.githubusercontent.com/openai/codex/refs/heads/main/codex-rs/models-manager/models.json), merges it with `codex-models-custom.json`, and writes `codex-models.json`. Both local files use the hardcoded directory `E:/workshop/copilot-api`, regardless of where the CLI is launched.
+On startup, copilot-api can fetch the [upstream Codex model catalog](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json), merge configured custom files and enabled DeepSeek metadata, and atomically write the configured output. Copy `config.example.json`, then select it with `--config` or `COPILOT_API_CONFIG`; paths inside the file are resolved relative to that file.
 
 The custom file uses the same `{ "models": [...] }` structure. Custom entries replace upstream entries with the same `slug`; other upstream entries and metadata are preserved. The included `gemini-3.8-flash` entry adapts the Codex instructions for Gemini 3.8 Flash and supports thinking levels `low`, `medium`, and `high` (not `minimal`). Its `context_window` stays at 272000, while `max_context_window` records the native input limit of 1048576. [Google's model reference](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash) specifies a 65536-token text output limit and text, image, video, audio, and PDF inputs. The catalog exposes text, image, and audio; video/PDF support and output limits are documented in the entry rather than represented by unsupported Codex schema fields. Actual attachment support depends on the client and provider. Its copied instructions remain local and should be refreshed when needed.
 
 To use it, set a top-level entry in your Codex `config.toml`, adjusting the absolute path for your checkout:
 
 ```toml
-model_catalog_json = "E:/workshop/copilot-api/codex-models.json"
+model_catalog_json = "/absolute/path/to/generated/codex-models.json"
 ```
 
-Edit `codex-models-custom.json` for custom models; the generated `codex-models.json` is overwritten after each successful startup refresh. Fetches time out after 10 seconds. Network, HTTP, parsing, or file errors produce a warning without stopping the proxy, and the last generated catalog is retained. If no catalog exists yet, an unsuccessful refresh cannot create one. The output is replaced only after the merged catalog has been written successfully.
+Edit a file listed in `catalog.customFiles` for custom models. Remote failures use the last upstream cache or generate from valid local sources; output replacement remains atomic.
 
 Codex consumes the generated snapshot through `model_catalog_json`, which replaces its default catalog. Restart Codex after a refresh to load it. Use `codex debug models` to verify the effective catalog. Catalog entries do not guarantee that the selected provider supports every listed model.
+
+## DeepSeek routing
+
+Enable DeepSeek in the JSON configuration and provide its key to the proxy process, for example `DEEPSEEK_API_KEY`. Codex should keep one gateway provider pointing at this server; selecting `deepseek-flash` or `deepseek-v4-pro` routes the request to DeepSeek, while other models continue to use Copilot. This allows model switching without changing the Codex profile or endpoint.
+
+DeepSeek routing currently applies to the Responses endpoint. DeepSeek does not support stored `previous_response_id`/`conversation` state, arbitrary built-in tools, or opaque history from another provider. Start a new task or send complete compatible text/tool history when changing providers.
+
+Configuration precedence is built-in defaults, `defaults`, the selected `environments` entry, then `COPILOT_API_*` overrides. Select an environment with `--env` or `COPILOT_API_ENV`. Boolean overrides accept only `true` or `false`; catalog path-list overrides are JSON arrays of absolute paths.
+
+For Docker, mount configuration read-only at `/config` and a writable catalog directory at `/data`, then use `--config /config/config.json --env docker`. The host Codex configuration must reference the host path corresponding to the `/data` mount. Linux services can similarly separate `/etc/copilot-api` configuration from `/var/lib/copilot-api` output.
+
+Older versions always used `E:/workshop/copilot-api`. Choose the intended old custom file explicitly in the new configuration, verify the generated catalog, then update `model_catalog_json`; no old file is moved or deleted automatically. Roll back by restoring the old proxy command and Codex catalog path.
 
 ## Using with Docker
 

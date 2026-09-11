@@ -4,9 +4,11 @@ import consola from "consola"
 
 import { awaitApproval } from "~/lib/approval"
 import { isModelAlias, resolveModelAlias } from "~/lib/model-aliases"
+import { resolveModelRoute } from "~/lib/model-routing"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { createResponses } from "~/services/copilot/create-responses"
+import { createDeepSeekResponses } from "~/services/deepseek/create-responses"
 
 import { normalizeResponsesItemIds } from "./sse-item-id-normalizer"
 
@@ -17,6 +19,7 @@ const forwardedResponseHeaders = [
   "x-request-id",
 ]
 
+// eslint-disable-next-line complexity
 export async function handleResponse(c: Context): Promise<Response> {
   const startedAt = Date.now()
   const requestSignal = c.req.raw.signal
@@ -33,7 +36,11 @@ export async function handleResponse(c: Context): Promise<Response> {
   if (state.manualApprove) await awaitApproval()
 
   const body = await c.req.arrayBuffer()
-  const { body: upstreamBody, requestedModel } = resolveResponseModelAlias(body)
+  const {
+    body: upstreamBody,
+    requestedModel,
+    provider,
+  } = resolveResponseModel(body)
   const shouldLogContent =
     requestedModel !== undefined && isModelAlias(requestedModel)
   if (shouldLogContent) {
@@ -59,7 +66,20 @@ export async function handleResponse(c: Context): Promise<Response> {
 
   const modelLabel = formatModelLabel(requestedModel)
   consola.info(`Request sent to ${modelLabel}`)
-  const upstream = await createResponses(upstreamBody, upstreamSignal)
+  let upstream: Response
+  if (provider === "deepseek") {
+    const deepSeekConfig = state.runtimeConfig?.providers.deepseek
+    if (deepSeekConfig === undefined) {
+      throw new Error("DeepSeek runtime configuration is not loaded")
+    }
+    upstream = await createDeepSeekResponses(
+      upstreamBody,
+      deepSeekConfig,
+      upstreamSignal,
+    )
+  } else {
+    upstream = await createResponses(upstreamBody, upstreamSignal)
+  }
   consola.info(
     `Response received from ${modelLabel}: ${upstream.status} in ${Date.now() - startedAt}ms`,
   )
@@ -81,7 +101,8 @@ export async function handleResponse(c: Context): Promise<Response> {
 
   let responseBody = upstream.body
   if (
-    state.responsesStableItemIds
+    provider === "copilot"
+    && state.responsesStableItemIds
     && responseBody !== null
     && upstream.headers.get("content-type")?.includes("text/event-stream")
   ) {
@@ -104,24 +125,73 @@ const formatModelLabel = (requestedModel?: string): string => {
   return `${requestedModel} (${resolvedModel})`
 }
 
-const resolveResponseModelAlias = (
+const resolveResponseModel = (
   body: ArrayBuffer,
-): { body: ArrayBuffer | string; requestedModel?: string } => {
+): {
+  body: ArrayBuffer | string
+  requestedModel?: string
+  provider: "copilot" | "deepseek"
+} => {
   const text = new TextDecoder().decode(body)
 
   try {
-    const payload = JSON.parse(text) as { model?: unknown }
-    if (typeof payload.model !== "string") return { body }
+    const payload = JSON.parse(text) as Record<string, unknown>
+    if (payload.model === undefined) {
+      return { body, provider: "copilot" }
+    }
+    if (typeof payload.model !== "string" || payload.model.length === 0) {
+      throw new Error("Responses model must be a non-empty string")
+    }
+    const config = state.runtimeConfig ?? {
+      environment: "legacy",
+      providers: {
+        copilot: { enabled: true },
+        deepseek: {
+          enabled: false,
+          baseUrl: "https://api.deepseek.com",
+          apiKeyEnv: "DEEPSEEK_API_KEY",
+          models: ["deepseek-flash", "deepseek-v4-pro"],
+        },
+      },
+      catalog: { enabled: false, customFiles: [], outputFile: "" },
+    }
+    const route = resolveModelRoute(payload.model, config)
+    if (route.provider === "deepseek") validateDeepSeekPayload(payload)
 
-    const model = resolveModelAlias(payload.model)
-    if (model === payload.model) return { body, requestedModel: payload.model }
+    if (route.upstreamModel === payload.model) {
+      return { body, requestedModel: payload.model, provider: route.provider }
+    }
 
     return {
-      body: JSON.stringify({ ...payload, model }),
+      body: JSON.stringify({ ...payload, model: route.upstreamModel }),
       requestedModel: payload.model,
+      provider: route.provider,
     }
-  } catch {
-    return { body }
+  } catch (error) {
+    if (error instanceof SyntaxError)
+      throw new Error("Responses request must be valid JSON")
+    throw error
+  }
+}
+
+const validateDeepSeekPayload = (payload: Record<string, unknown>): void => {
+  if (
+    (payload.previous_response_id !== null
+      && payload.previous_response_id !== undefined)
+    || (payload.conversation !== null && payload.conversation !== undefined)
+  ) {
+    throw new Error("DeepSeek does not support stored conversation state")
+  }
+  if (Array.isArray(payload.tools)) {
+    for (const tool of payload.tools) {
+      if (tool === null || typeof tool !== "object") continue
+      const entry = tool as Record<string, unknown>
+      if (entry.type === "function") continue
+      if (entry.type === "custom" && entry.name === "apply_patch") continue
+      throw new Error(
+        `DeepSeek does not support tool type: ${String(entry.type)}`,
+      )
+    }
   }
 }
 
