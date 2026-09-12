@@ -2,31 +2,37 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { z } from "zod"
 
-import { PATHS } from "./paths"
+import {
+  assertCodexProfileName,
+  DEFAULT_CODEX_PROFILE,
+} from "~/lib/codex-credentials"
+import { assertModelRoutingConflicts } from "~/lib/model-routing"
 
 const providerSchema = z.strictObject({
   enabled: z.boolean().optional(),
   stripReasoningContentForGpt: z.boolean().optional(),
 })
+const codexSchema = z.strictObject({
+  authProfile: z.string().min(1).optional(),
+  baseUrl: z.url().optional(),
+  enabled: z.boolean().optional(),
+  models: z.array(z.string().min(1)).min(1).optional(),
+  transport: z.literal("http").optional(),
+})
 const deepSeekSchema = z.strictObject({
   enabled: z.boolean().optional(),
   baseUrl: z.url().optional(),
-  apiKeyEnv: z.string().min(1).optional(),
+  apiKey: z.string().min(1).optional(),
   models: z.array(z.string().min(1)).min(1).optional(),
-})
-const catalogSchema = z.strictObject({
-  enabled: z.boolean().optional(),
-  customFiles: z.array(z.string().min(1)).optional(),
-  outputFile: z.string().min(1).optional(),
 })
 const layerSchema = z.strictObject({
   providers: z
     .strictObject({
+      codex: codexSchema.optional(),
       copilot: providerSchema.optional(),
       deepseek: deepSeekSchema.optional(),
     })
     .optional(),
-  catalog: catalogSchema.optional(),
 })
 const fileSchema = z.strictObject({
   version: z.literal(1),
@@ -34,19 +40,29 @@ const fileSchema = z.strictObject({
   environments: z.record(z.string(), layerSchema).optional(),
 })
 
+/** The ChatGPT credential may only ever be sent to the verified Codex origin. */
+export const CODEX_UPSTREAM_ORIGIN = "https://chatgpt.com"
+
 export interface RuntimeConfig {
   environment: string
   source?: string
   providers: {
+    codex: {
+      authProfile: string
+      baseUrl: string
+      enabled: boolean
+      gatewayApiKey: string
+      models: Array<string>
+      transport: "http"
+    }
     copilot: { enabled: boolean; stripReasoningContentForGpt: boolean }
     deepseek: {
       enabled: boolean
       baseUrl: string
-      apiKeyEnv: string
+      apiKey: string
       models: Array<string>
     }
   }
-  catalog: { enabled: boolean; customFiles: Array<string>; outputFile: string }
 }
 
 interface LoadRuntimeConfigOptions {
@@ -56,20 +72,27 @@ interface LoadRuntimeConfigOptions {
   env?: Record<string, string | undefined>
 }
 
-const defaults = (): Omit<RuntimeConfig, "environment" | "source"> => ({
+/** Built-in provider defaults, also used when no configuration was loaded. */
+export const defaultProviderConfig = (): Omit<
+  RuntimeConfig,
+  "environment" | "source"
+> => ({
   providers: {
+    codex: {
+      authProfile: DEFAULT_CODEX_PROFILE,
+      baseUrl: `${CODEX_UPSTREAM_ORIGIN}/backend-api/codex`,
+      enabled: false,
+      gatewayApiKey: "",
+      models: [],
+      transport: "http",
+    },
     copilot: { enabled: true, stripReasoningContentForGpt: true },
     deepseek: {
       enabled: false,
       baseUrl: "https://api.deepseek.com",
-      apiKeyEnv: "DEEPSEEK_API_KEY",
+      apiKey: "",
       models: ["deepseek-flash", "deepseek-v4-pro"],
     },
-  },
-  catalog: {
-    enabled: true,
-    customFiles: [],
-    outputFile: path.join(PATHS.APP_DIR, "codex-models.json"),
   },
 })
 
@@ -80,9 +103,15 @@ export async function loadRuntimeConfig(
   const cwd = options.cwd ?? process.cwd()
   const selectedPath = options.configPath ?? env.COPILOT_API_CONFIG
   const environment = options.environment ?? env.COPILOT_API_ENV ?? "default"
+  const defaultPath = path.resolve(cwd, "config.json")
   const source =
-    selectedPath === undefined ? undefined : path.resolve(cwd, selectedPath)
-  let layer = defaults()
+    selectedPath === undefined ?
+      await fs
+        .access(defaultPath)
+        .then(() => defaultPath)
+        .catch(() => undefined)
+    : path.resolve(cwd, selectedPath)
+  let layer = defaultProviderConfig()
 
   if (source !== undefined) {
     const parsed = fileSchema.parse(
@@ -100,24 +129,22 @@ export async function loadRuntimeConfig(
     layer = mergeLayer(layer, environmentLayer)
   }
 
-  const baseDirectory = source === undefined ? cwd : path.dirname(source)
   const config: RuntimeConfig = {
     ...layer,
     environment,
     source,
-    catalog: {
-      ...layer.catalog,
-      customFiles: layer.catalog.customFiles.map((value) =>
-        path.resolve(baseDirectory, value),
-      ),
-      outputFile: path.resolve(baseDirectory, layer.catalog.outputFile),
-    },
   }
 
   applyEnvironment(config, env)
-  if (!config.providers.copilot.enabled && !config.providers.deepseek.enabled) {
+  if (
+    !config.providers.copilot.enabled
+    && !config.providers.deepseek.enabled
+    && !config.providers.codex.enabled
+  ) {
     throw new Error("At least one model provider must be enabled")
   }
+  assertCodexProvider(config.providers.codex)
+  assertModelRoutingConflicts(config)
   return config
 }
 
@@ -127,10 +154,43 @@ function mergeLayer(
 ): Omit<RuntimeConfig, "environment" | "source"> {
   return {
     providers: {
+      codex: { ...base.providers.codex, ...overlay?.providers?.codex },
       copilot: { ...base.providers.copilot, ...overlay?.providers?.copilot },
       deepseek: { ...base.providers.deepseek, ...overlay?.providers?.deepseek },
     },
-    catalog: { ...base.catalog, ...overlay?.catalog },
+  }
+}
+
+/**
+ * Rejects a Codex provider that could not serve requests safely: no routable
+ * model, no gateway key, an upstream that is not the verified origin, or a
+ * profile name that could escape the credential directory.
+ */
+function assertCodexProvider(codex: RuntimeConfig["providers"]["codex"]): void {
+  if (!codex.enabled) return
+
+  if (codex.models.length === 0) {
+    throw new Error("Codex provider requires at least one configured model")
+  }
+
+  if (codex.gatewayApiKey.trim().length === 0) {
+    throw new Error(
+      "Missing Codex gateway API key; set COPILOT_API_GATEWAY_API_KEY before enabling the Codex provider",
+    )
+  }
+
+  if (new URL(codex.baseUrl).origin !== CODEX_UPSTREAM_ORIGIN) {
+    throw new Error(
+      `Codex base URL must stay on ${CODEX_UPSTREAM_ORIGIN}: ${codex.baseUrl}`,
+    )
+  }
+
+  try {
+    assertCodexProfileName(codex.authProfile)
+  } catch {
+    throw new Error(
+      `Invalid Codex authProfile in configuration: ${JSON.stringify(codex.authProfile)}`,
+    )
   }
 }
 
@@ -153,31 +213,23 @@ function applyEnvironment(
       "COPILOT_API_DEEPSEEK_ENABLED",
       env.COPILOT_API_DEEPSEEK_ENABLED,
     ) ?? config.providers.deepseek.enabled
-  config.catalog.enabled =
-    parseBoolean("COPILOT_API_CATALOG_ENABLED", env.COPILOT_API_CATALOG_ENABLED)
-    ?? config.catalog.enabled
+  config.providers.codex.enabled =
+    parseBoolean("COPILOT_API_CODEX_ENABLED", env.COPILOT_API_CODEX_ENABLED)
+    ?? config.providers.codex.enabled
   if (env.COPILOT_API_DEEPSEEK_BASE_URL !== undefined) {
     config.providers.deepseek.baseUrl = z
       .url()
       .parse(env.COPILOT_API_DEEPSEEK_BASE_URL)
   }
-  if (env.COPILOT_API_CATALOG_OUTPUT_FILE !== undefined) {
-    if (!path.isAbsolute(env.COPILOT_API_CATALOG_OUTPUT_FILE)) {
-      throw new Error("COPILOT_API_CATALOG_OUTPUT_FILE must be absolute")
-    }
-    config.catalog.outputFile = path.normalize(
-      env.COPILOT_API_CATALOG_OUTPUT_FILE,
-    )
+  if (env.COPILOT_API_CODEX_BASE_URL !== undefined) {
+    config.providers.codex.baseUrl = z
+      .url()
+      .parse(env.COPILOT_API_CODEX_BASE_URL)
   }
-  if (env.COPILOT_API_CATALOG_CUSTOM_FILES !== undefined) {
-    const files = z
-      .array(z.string().min(1))
-      .parse(JSON.parse(env.COPILOT_API_CATALOG_CUSTOM_FILES))
-    if (files.some((file) => !path.isAbsolute(file))) {
-      throw new Error(
-        "COPILOT_API_CATALOG_CUSTOM_FILES entries must be absolute",
-      )
-    }
-    config.catalog.customFiles = files.map((file) => path.normalize(file))
+  if (env.COPILOT_API_CODEX_AUTH_PROFILE !== undefined) {
+    config.providers.codex.authProfile = env.COPILOT_API_CODEX_AUTH_PROFILE
+  }
+  if (env.COPILOT_API_GATEWAY_API_KEY !== undefined) {
+    config.providers.codex.gatewayApiKey = env.COPILOT_API_GATEWAY_API_KEY
   }
 }

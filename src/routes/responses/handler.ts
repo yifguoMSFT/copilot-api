@@ -4,12 +4,18 @@ import consola from "consola"
 
 import { awaitApproval } from "~/lib/approval"
 import { isModelAlias, resolveModelAlias } from "~/lib/model-aliases"
-import { resolveModelRoute } from "~/lib/model-routing"
+import { resolveModelRoute, type ModelProvider } from "~/lib/model-routing"
 import { checkRateLimit } from "~/lib/rate-limit"
+import { defaultProviderConfig } from "~/lib/runtime-config"
 import { state } from "~/lib/state"
+import { createCodexResponses } from "~/services/codex/forward-responses"
 import { createResponses } from "~/services/copilot/create-responses"
 import { createDeepSeekResponses } from "~/services/deepseek/create-responses"
 
+import {
+  authorizeCodexRequest,
+  toCodexAuthErrorResponse,
+} from "./codex-passthrough"
 import { stripReasoningContent } from "./gpt-reasoning-content"
 import { normalizeResponsesItemIds } from "./sse-item-id-normalizer"
 
@@ -50,12 +56,7 @@ export async function handleResponse(c: Context): Promise<Response> {
       sanitizeLoggedContent(new TextDecoder().decode(body)),
     )
   }
-  consola.debug("Responses request body read", {
-    bodyBytes: body.byteLength,
-    elapsedMs: Date.now() - startedAt,
-    signalAborted: requestSignal.aborted,
-    signalReason: formatAbortReason(requestSignal),
-  })
+  logBodyRead(body.byteLength, startedAt, requestSignal)
 
   const upstreamSignal = requestSignal.aborted ? undefined : requestSignal
   if (upstreamSignal === undefined) {
@@ -68,7 +69,28 @@ export async function handleResponse(c: Context): Promise<Response> {
   const modelLabel = formatModelLabel(requestedModel)
   consola.info(`Request sent to ${modelLabel}`)
   let upstream: Response
-  if (provider === "deepseek") {
+  if (provider === "codex") {
+    const codexConfig = state.runtimeConfig?.providers.codex
+    if (codexConfig === undefined) {
+      throw new Error("Codex runtime configuration is not loaded")
+    }
+    const unauthorized = authorizeCodexRequest(c.req.raw.headers, codexConfig)
+    if (unauthorized !== undefined) return unauthorized
+
+    try {
+      upstream = await createCodexResponses(upstreamBody, codexConfig, {
+        headers: c.req.raw.headers,
+        signal: upstreamSignal,
+      })
+    } catch (error) {
+      const authFailure = toCodexAuthErrorResponse(
+        error,
+        codexConfig.authProfile,
+      )
+      if (authFailure !== undefined) return authFailure
+      throw error
+    }
+  } else if (provider === "deepseek") {
     const deepSeekConfig = state.runtimeConfig?.providers.deepseek
     if (deepSeekConfig === undefined) {
       throw new Error("DeepSeek runtime configuration is not loaded")
@@ -85,20 +107,8 @@ export async function handleResponse(c: Context): Promise<Response> {
     `Response received from ${modelLabel}: ${upstream.status} in ${Date.now() - startedAt}ms`,
   )
   if (shouldLogContent) logResponseOutput(requestedModel, upstream.clone())
-  const headers = new Headers()
-
-  for (const name of forwardedResponseHeaders) {
-    const value = upstream.headers.get(name)
-    if (value !== null) headers.set(name, value)
-  }
-
-  consola.debug("Responses upstream response ready", {
-    status: upstream.status,
-    contentType: upstream.headers.get("content-type"),
-    requestId: upstream.headers.get("x-request-id"),
-    elapsedMs: Date.now() - startedAt,
-    signalAborted: requestSignal.aborted,
-  })
+  const headers = buildForwardedHeaders(upstream)
+  logUpstreamReady(upstream, startedAt, requestSignal)
 
   let responseBody = upstream.body
   if (
@@ -117,6 +127,42 @@ export async function handleResponse(c: Context): Promise<Response> {
   })
 }
 
+const buildForwardedHeaders = (upstream: Response): Headers => {
+  const headers = new Headers()
+  for (const name of forwardedResponseHeaders) {
+    const value = upstream.headers.get(name)
+    if (value !== null) headers.set(name, value)
+  }
+  return headers
+}
+
+const logBodyRead = (
+  bodyBytes: number,
+  startedAt: number,
+  requestSignal: AbortSignal,
+): void => {
+  consola.debug("Responses request body read", {
+    bodyBytes,
+    elapsedMs: Date.now() - startedAt,
+    signalAborted: requestSignal.aborted,
+    signalReason: formatAbortReason(requestSignal),
+  })
+}
+
+const logUpstreamReady = (
+  upstream: Response,
+  startedAt: number,
+  requestSignal: AbortSignal,
+): void => {
+  consola.debug("Responses upstream response ready", {
+    status: upstream.status,
+    contentType: upstream.headers.get("content-type"),
+    requestId: upstream.headers.get("x-request-id"),
+    elapsedMs: Date.now() - startedAt,
+    signalAborted: requestSignal.aborted,
+  })
+}
+
 const formatModelLabel = (requestedModel?: string): string => {
   if (requestedModel === undefined) return "unknown model"
 
@@ -131,7 +177,7 @@ const resolveResponseModel = (
 ): {
   body: ArrayBuffer | string
   requestedModel?: string
-  provider: "copilot" | "deepseek"
+  provider: ModelProvider
 } => {
   const text = new TextDecoder().decode(body)
 
@@ -145,19 +191,9 @@ const resolveResponseModel = (
     }
     const config = state.runtimeConfig ?? {
       environment: "legacy",
-      providers: {
-        copilot: { enabled: true, stripReasoningContentForGpt: true },
-        deepseek: {
-          enabled: false,
-          baseUrl: "https://api.deepseek.com",
-          apiKeyEnv: "DEEPSEEK_API_KEY",
-          models: ["deepseek-flash", "deepseek-v4-pro"],
-        },
-      },
-      catalog: { enabled: false, customFiles: [], outputFile: "" },
+      ...defaultProviderConfig(),
     }
     const route = resolveModelRoute(payload.model, config)
-    if (route.provider === "deepseek") validateDeepSeekPayload(payload)
     let nextPayload: Record<string, unknown> = payload
     let changed = false
 
@@ -177,7 +213,7 @@ const resolveResponseModel = (
         nextPayload = { ...nextPayload, input: stripped.input }
         changed = true
         consola.info(
-          `GPT reasoning content stripped: model=${route.upstreamModel} indices=[${stripped.indices.join(",")}] items=${stripped.indices.length} contentParts=${stripped.contentParts}`,
+          `GPT reasoning sanitized: model=${route.upstreamModel} indices=[${stripped.indices.join(",")}] items=${stripped.indices.length} contentParts=${stripped.contentParts} encryptedContent=${stripped.encryptedContent}`,
         )
       }
     }
@@ -195,27 +231,6 @@ const resolveResponseModel = (
     if (error instanceof SyntaxError)
       throw new Error("Responses request must be valid JSON")
     throw error
-  }
-}
-
-const validateDeepSeekPayload = (payload: Record<string, unknown>): void => {
-  if (
-    (payload.previous_response_id !== null
-      && payload.previous_response_id !== undefined)
-    || (payload.conversation !== null && payload.conversation !== undefined)
-  ) {
-    throw new Error("DeepSeek does not support stored conversation state")
-  }
-  if (Array.isArray(payload.tools)) {
-    for (const tool of payload.tools) {
-      if (tool === null || typeof tool !== "object") continue
-      const entry = tool as Record<string, unknown>
-      if (entry.type === "function") continue
-      if (entry.type === "custom" && entry.name === "apply_patch") continue
-      throw new Error(
-        `DeepSeek does not support tool type: ${String(entry.type)}`,
-      )
-    }
   }
 }
 

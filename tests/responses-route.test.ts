@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import consola from "consola"
 
+import { defaultProviderConfig } from "../src/lib/runtime-config"
 import { state } from "../src/lib/state"
 import { server } from "../src/server"
 
@@ -52,6 +53,66 @@ const post = (path: string, body = "{}", signal?: AbortSignal) =>
       signal,
     }),
   )
+
+describe("DeepSeek forwarding", () => {
+  test.each([200, 400])(
+    "forwards DeepSeek namespace tools unchanged and preserves upstream status %s",
+    async (status) => {
+      const previousConfig = state.runtimeConfig
+      state.runtimeConfig = {
+        environment: "test",
+        providers: {
+          ...defaultProviderConfig().providers,
+          copilot: { enabled: true, stripReasoningContentForGpt: true },
+          deepseek: {
+            enabled: true,
+            baseUrl: "https://api.deepseek.com",
+            apiKey: "test-deepseek-key",
+            models: ["deepseek-flash"],
+          },
+        },
+      }
+      const upstreamBody = status === 200 ? "response" : "unsupported tool"
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(new Response(upstreamBody, { status })),
+      )
+      const body = JSON.stringify({
+        model: "deepseek-flash",
+        previous_response_id: "previous-response",
+        conversation: "conversation-id",
+        tools: [
+          {
+            type: "namespace",
+            name: "functions",
+            tools: [
+              {
+                type: "function",
+                name: "exec_command",
+                parameters: { type: "object", properties: {} },
+              },
+            ],
+          },
+        ],
+      })
+      try {
+        const response = await post("/v1/responses", body)
+        expect(response.status).toBe(status)
+        expect(await response.text()).toBe(upstreamBody)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+        expect(url).toBe("https://api.deepseek.com/responses")
+        expect(await new Response(init.body).text()).toBe(body)
+        expect((init.headers as Record<string, string>).authorization).toBe(
+          "Bearer test-deepseek-key",
+        )
+      } finally {
+        // Tests run sequentially and restore their own runtime configuration.
+        // eslint-disable-next-line require-atomic-updates
+        state.runtimeConfig = previousConfig
+      }
+    },
+  )
+})
 
 describe("Responses routes", () => {
   test.each(["/responses", "/v1/responses"])(

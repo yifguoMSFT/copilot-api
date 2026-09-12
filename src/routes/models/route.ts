@@ -1,5 +1,7 @@
 import { Hono } from "hono"
+import path from "node:path"
 
+import { buildCodexModelEntries, loadCodexCatalog } from "~/lib/codex-models"
 import { forwardError } from "~/lib/error"
 import { modelAliasEntries } from "~/lib/model-aliases"
 import { state } from "~/lib/state"
@@ -50,10 +52,19 @@ modelRoutes.get("/", async (c) => {
           display_name: id,
         }))
       : []
+    // Only an enabled Codex provider is a route the gateway can serve, so a
+    // disabled configuration publishes no Codex model at all.
+    const codexModels =
+      state.runtimeConfig?.providers.codex.enabled === true ?
+        buildCodexModelEntries(
+          state.runtimeConfig.providers.codex.models,
+          await loadCodexCatalog(path.join(process.cwd(), "codex-models.json")),
+        )
+      : []
 
     return c.json({
       object: "list",
-      data: [...copilotModels, ...deepSeekModels],
+      data: [...copilotModels, ...deepSeekModels, ...codexModels],
       has_more: false,
     })
   } catch (error) {

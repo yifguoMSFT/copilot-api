@@ -3,13 +3,16 @@
 import { defineCommand } from "citty"
 import clipboard from "clipboardy"
 import consola from "consola"
+import path from "node:path"
 import { serve } from "srvx"
 import invariant from "tiny-invariant"
 
-import { refreshCodexModels } from "./lib/codex-models"
-import { ensurePaths } from "./lib/paths"
+import { createCodexCredentialStore } from "./lib/codex-credentials"
+import { findCodexCatalogGaps, refreshCodexModels } from "./lib/codex-models"
+import { assertModelRoutingConflicts } from "./lib/model-routing"
+import { ensureCodexAuthDir, ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
-import { loadRuntimeConfig } from "./lib/runtime-config"
+import { loadRuntimeConfig, type RuntimeConfig } from "./lib/runtime-config"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { setupCopilotToken, setupGitHubToken } from "./lib/token"
@@ -18,6 +21,7 @@ import { server } from "./server"
 
 interface RunServerOptions {
   port: number
+  hostname?: string
   verbose: boolean
   accountType: string
   manual: boolean
@@ -32,7 +36,93 @@ interface RunServerOptions {
   environment?: string
 }
 
-// eslint-disable-next-line max-lines-per-function
+type CodexProviderConfig = RuntimeConfig["providers"]["codex"]
+
+/**
+ * Startup side effects of each provider. Extracted so a Codex-only install can
+ * be verified to never touch GitHub or the Copilot token exchange.
+ */
+export interface ProviderBootstrap {
+  cacheModels: () => Promise<void>
+  cacheVSCodeVersion: () => Promise<void>
+  ensureCodexAuthDir: () => Promise<string>
+  ensurePaths: () => Promise<void>
+  setupCopilotToken: () => Promise<void>
+  setupGitHubToken: () => Promise<void>
+}
+
+export async function bootstrapProviders(
+  config: RuntimeConfig,
+  options: { githubToken?: string },
+  dependencies: ProviderBootstrap = {
+    cacheModels,
+    cacheVSCodeVersion,
+    ensureCodexAuthDir,
+    ensurePaths,
+    setupCopilotToken,
+    setupGitHubToken,
+  },
+): Promise<void> {
+  if (config.providers.codex.enabled) await dependencies.ensureCodexAuthDir()
+  if (!config.providers.copilot.enabled) return
+
+  await dependencies.ensurePaths()
+  await dependencies.cacheVSCodeVersion()
+
+  if (options.githubToken) {
+    state.githubToken = options.githubToken
+    consola.info("Using provided GitHub token")
+  } else {
+    await dependencies.setupGitHubToken()
+  }
+
+  await dependencies.setupCopilotToken()
+  await dependencies.cacheModels()
+}
+
+/**
+ * The service starts without a Codex login so an unattended restart is not
+ * blocked; requests that need the missing credential are rejected instead.
+ */
+async function reportCodexReadiness(codex: CodexProviderConfig): Promise<void> {
+  try {
+    const store = createCodexCredentialStore({
+      directory: await ensureCodexAuthDir(),
+    })
+    const credential = await store.read(codex.authProfile)
+    if (credential === undefined) {
+      consola.warn(
+        `No Codex credentials for profile "${codex.authProfile}"; run "codex-auth login" before using Codex models. Codex requests fail until then.`,
+      )
+      return
+    }
+    consola.info(
+      `Codex provider ready (profile "${codex.authProfile}", models: ${codex.models.join(", ")})`,
+    )
+  } catch (error) {
+    consola.warn(
+      `Could not read Codex credentials for profile "${codex.authProfile}": ${error instanceof Error ? error.message : "unknown error"}`,
+    )
+  }
+}
+
+/**
+ * Codex only lists models its `model_catalog_json` describes, so a passthrough
+ * model missing from the generated catalog stays routable but cannot be picked
+ * in the App. Point at the fix at startup instead of leaving it undiscovered.
+ */
+async function reportCodexCatalogCoverage(
+  codex: CodexProviderConfig,
+): Promise<void> {
+  const catalogFile = path.join(process.cwd(), "codex-models.json")
+  const missing = await findCodexCatalogGaps(codex.models, catalogFile)
+  if (missing.length === 0) return
+
+  consola.warn(
+    `Codex models missing from ${catalogFile}: ${missing.join(", ")}. Add matching entries to codex-models-custom.json and restart Codex so its model picker can list them.`,
+  )
+}
+
 export async function runServer(options: RunServerOptions): Promise<void> {
   state.verbose = options.verbose
 
@@ -61,44 +151,37 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     environment: options.environment,
   })
   state.runtimeConfig = runtimeConfig
-  if (runtimeConfig.providers.deepseek.enabled) {
-    const apiKey =
-      process.env[runtimeConfig.providers.deepseek.apiKeyEnv]?.trim()
-    if (!apiKey) {
-      throw new Error(
-        `Missing DeepSeek API key: ${runtimeConfig.providers.deepseek.apiKeyEnv}`,
-      )
-    }
-  }
-  if (runtimeConfig.providers.copilot.enabled) await ensurePaths()
-  if (runtimeConfig.catalog.enabled) {
-    await refreshCodexModels({
-      outputFile: runtimeConfig.catalog.outputFile,
-      customFiles: runtimeConfig.catalog.customFiles,
-      deepSeekModels:
-        runtimeConfig.providers.deepseek.enabled ?
-          runtimeConfig.providers.deepseek.models
-        : [],
-    })
-  }
-  if (runtimeConfig.providers.copilot.enabled) {
-    await cacheVSCodeVersion()
+  // Static conflicts fail before any directory or network work happens.
+  assertModelRoutingConflicts(runtimeConfig)
+  await refreshCodexModels(process.cwd())
+  if (
+    runtimeConfig.providers.deepseek.enabled
+    && !runtimeConfig.providers.deepseek.apiKey.trim()
+  )
+    throw new Error("Missing DeepSeek API key")
 
-    if (options.githubToken) {
-      state.githubToken = options.githubToken
-      consola.info("Using provided GitHub token")
-    } else {
-      await setupGitHubToken()
-    }
+  await bootstrapProviders(runtimeConfig, {
+    ...(options.githubToken === undefined ?
+      {}
+    : { githubToken: options.githubToken }),
+  })
 
-    await setupCopilotToken()
-    await cacheModels()
+  if (runtimeConfig.providers.codex.enabled) {
+    // The Copilot catalogue is only available after bootstrap, so the
+    // cross-provider collision check is completed here.
+    assertModelRoutingConflicts(
+      runtimeConfig,
+      state.models?.data.map((model) => model.id) ?? [],
+    )
+    await reportCodexCatalogCoverage(runtimeConfig.providers.codex)
+    await reportCodexReadiness(runtimeConfig.providers.codex)
   }
 
   consola.info(
     `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
   )
 
+  const hostname = options.hostname ?? "127.0.0.1"
   const serverUrl = `http://localhost:${options.port}`
 
   if (options.claudeCode) {
@@ -154,6 +237,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   serve({
     fetch: server.fetch,
+    hostname,
     port: options.port,
   })
 }
@@ -235,6 +319,12 @@ export const start = defineCommand({
       type: "string",
       description: "Configuration environment name",
     },
+    host: {
+      type: "string",
+      default: "127.0.0.1",
+      description:
+        "Host to bind. Defaults to loopback; set explicitly to expose the proxy",
+    },
   },
   run({ args }) {
     const rateLimitRaw = args["rate-limit"]
@@ -243,6 +333,7 @@ export const start = defineCommand({
       rateLimitRaw === undefined ? undefined : Number.parseInt(rateLimitRaw, 10)
 
     return runServer({
+      hostname: args.host,
       port: Number.parseInt(args.port, 10),
       verbose: args.verbose,
       accountType: args["account-type"],

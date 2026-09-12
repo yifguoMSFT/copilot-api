@@ -2,29 +2,25 @@
   "version": 1,
   "defaults": {
     "providers": {
+      "codex": {
+        "enabled": false,
+        "baseUrl": "https://chatgpt.com/backend-api/codex",
+        "models": ["gpt-5.5"],
+        "authProfile": "default",
+        "transport": "http"
+      },
       "copilot": { "enabled": true, "stripReasoningContentForGpt": true },
       "deepseek": {
         "enabled": false,
         "baseUrl": "https://api.deepseek.com",
-        "apiKeyEnv": "DEEPSEEK_API_KEY",
+        "apiKey": "replace-with-your-deepseek-api-key",
         "models": ["deepseek-flash", "deepseek-v4-pro"]
       }
-    },
-    "catalog": {
-      "enabled": true,
-      "customFiles": ["./codex-models-custom.json"],
-      "outputFile": "./generated/codex-models.json"
     }
   },
   "environments": {
     "development": {
       "providers": { "deepseek": { "enabled": true } }
-    },
-    "docker": {
-      "catalog": {
-        "customFiles": ["/config/codex-models-custom.json"],
-        "outputFile": "/data/codex-models.json"
-      }
     }
   }
 }

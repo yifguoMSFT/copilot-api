@@ -4,7 +4,13 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import { refreshCodexModels } from "../src/lib/codex-models"
+import {
+  buildCodexModelEntries,
+  codexModelCapabilities,
+  findCodexCatalogGaps,
+  loadCodexCatalog,
+  refreshCodexModels,
+} from "../src/lib/codex-models"
 
 let directory: string
 let fetchMock: ReturnType<typeof spyOn<typeof globalThis, "fetch">>
@@ -154,4 +160,103 @@ test("explicit portable configuration can generate local DeepSeek metadata offli
     "deepseek-flash",
     "sol-fast",
   ])
+})
+
+test("publishes catalog capabilities without leaking instruction or routing fields", () => {
+  const catalog = new Map([
+    [
+      "gpt-5.5",
+      {
+        slug: "gpt-5.5",
+        context_window: 128_000,
+        max_context_window: 256_000,
+        default_reasoning_level: "medium",
+        description: "Upstream wording",
+        display_name: "GPT-5.5",
+        input_modalities: ["text", "image"],
+        model_messages: { instructions_template: "secret template" },
+        prefer_websockets: true,
+        supported_reasoning_levels: [
+          { description: "Fast", effort: "low" },
+          { effort: "medium" },
+        ],
+        supports_parallel_tool_calls: true,
+      },
+    ],
+  ])
+
+  expect(buildCodexModelEntries(["gpt-5.5"], catalog)).toEqual([
+    {
+      id: "gpt-5.5",
+      object: "model",
+      type: "model",
+      created: 0,
+      created_at: new Date(0).toISOString(),
+      owned_by: "codex",
+      display_name: "GPT-5.5",
+      context_window: 128_000,
+      max_context_window: 256_000,
+      default_reasoning_level: "medium",
+      description: "Upstream wording",
+      input_modalities: ["text", "image"],
+      supported_reasoning_levels: [
+        { description: "Fast", effort: "low" },
+        { effort: "medium" },
+      ],
+      supports_parallel_tool_calls: true,
+    },
+  ])
+})
+
+test("lists a configured model the catalog does not describe", () => {
+  expect(buildCodexModelEntries(["local-passthrough"], new Map())).toEqual([
+    {
+      id: "local-passthrough",
+      object: "model",
+      type: "model",
+      created: 0,
+      created_at: new Date(0).toISOString(),
+      owned_by: "codex",
+      display_name: "local-passthrough",
+    },
+  ])
+})
+
+test("drops malformed capability values instead of failing the catalogue", () => {
+  expect(
+    codexModelCapabilities({
+      context_window: "128000",
+      display_name: 5,
+      input_modalities: "text",
+      supported_reasoning_levels: [{ effort: 3 }],
+      supports_parallel_tool_calls: null,
+    }),
+  ).toEqual({})
+  expect(codexModelCapabilities(undefined)).toEqual({})
+})
+
+test("treats a missing or malformed local catalogue as no metadata", async () => {
+  expect([
+    ...(
+      await loadCodexCatalog(path.join(directory, "codex-models.json"))
+    ).keys(),
+  ]).toEqual(["previous"])
+  expect(
+    await loadCodexCatalog(path.join(directory, "missing.json")),
+  ).toHaveProperty("size", 0)
+
+  await fs.writeFile(path.join(directory, "broken.json"), "not json")
+  expect(
+    await loadCodexCatalog(path.join(directory, "broken.json")),
+  ).toHaveProperty("size", 0)
+})
+
+test("reports the configured models the App catalogue does not describe", async () => {
+  const catalogFile = path.join(directory, "codex-models.json")
+
+  expect(
+    await findCodexCatalogGaps(["previous", "gpt-unlisted"], catalogFile),
+  ).toEqual(["gpt-unlisted"])
+  expect(await findCodexCatalogGaps(["previous"], catalogFile)).toEqual([])
+  expect(warnMock).not.toHaveBeenCalled()
 })
