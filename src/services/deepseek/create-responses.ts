@@ -5,8 +5,8 @@ export async function createDeepSeekResponses(
   config: RuntimeConfig["providers"]["deepseek"],
   signal?: AbortSignal,
 ): Promise<Response> {
-  const apiKey = process.env[config.apiKeyEnv]?.trim()
-  if (!apiKey) throw new Error(`Missing DeepSeek API key: ${config.apiKeyEnv}`)
+  const apiKey = config.apiKey.trim()
+  if (!apiKey) throw new Error("Missing DeepSeek API key")
 
   const baseUrl = new URL(config.baseUrl)
   if (baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash) {

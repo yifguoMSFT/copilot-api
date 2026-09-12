@@ -27,7 +27,6 @@ const repo = path.resolve(import.meta.dir, "..")
 const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "copilot-dist-"))
 await fs.mkdir(path.join(workDir, "home"), { recursive: true })
 process.env.USERPROFILE = path.join(workDir, "home")
-process.env.DEEPSEEK_API_KEY = "verify-key"
 process.chdir(workDir)
 
 const configPath = path.join(workDir, "config.json")
@@ -44,11 +43,10 @@ await fs.writeFile(
         deepseek: {
           enabled: mode === "deepseek",
           baseUrl: "https://deepseek.invalid",
-          apiKeyEnv: "DEEPSEEK_API_KEY",
+          apiKey: "verify-key",
           models: ["deepseek-flash"],
         },
       },
-      catalog: { enabled: false },
     },
   }),
 )
@@ -139,6 +137,7 @@ const reasoningEntry = {
   type: "reasoning",
   id: "reasoning-40",
   summary: [],
+  encrypted_content: "cipher-40",
   content: [{ type: "reasoning_text", text: "hidden" }],
 }
 
@@ -186,17 +185,20 @@ const expectedUrl =
     "https://deepseek.invalid/responses"
   : "https://api.githubcopilot.com/responses"
 const expectedCleared = mode === "gpt"
+const expectedEncryptedRemoved = mode === "gpt"
 const expectedBytesUnchanged = mode !== "gpt"
 
 const actual = {
   url: upstream.url,
   cleared: Array.isArray(reasoningContent) && reasoningContent.length === 0,
+  encryptedRemoved: !Object.hasOwn(sent.input[40] ?? {}, "encrypted_content"),
   bytesUnchanged: sentText === body,
 }
 
 const pass =
   actual.url === expectedUrl
   && actual.cleared === expectedCleared
+  && actual.encryptedRemoved === expectedEncryptedRemoved
   && actual.bytesUnchanged === expectedBytesUnchanged
 
 console.log(JSON.stringify({ mode, status: response.status, actual, pass }))

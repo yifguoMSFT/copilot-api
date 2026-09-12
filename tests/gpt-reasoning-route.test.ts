@@ -3,6 +3,7 @@ import consola from "consola"
 
 import type { RuntimeConfig } from "../src/lib/runtime-config"
 
+import { defaultProviderConfig } from "../src/lib/runtime-config"
 import { state } from "../src/lib/state"
 import { server } from "../src/server"
 
@@ -22,21 +23,22 @@ const config = (
 ): RuntimeConfig => ({
   environment: "test",
   providers: {
+    ...defaultProviderConfig().providers,
     copilot: { enabled: true, stripReasoningContentForGpt },
     deepseek: {
       enabled: deepseekEnabled,
       baseUrl: "https://api.deepseek.com",
-      apiKeyEnv: "DEEPSEEK_API_KEY",
+      apiKey: "test-deepseek-key",
       models: ["deepseek-flash"],
     },
   },
-  catalog: { enabled: false, customFiles: [], outputFile: "" },
 })
 
 const reasoningEntry = {
   type: "reasoning",
   id: "reasoning-40",
   summary: [],
+  encrypted_content: "cipher-40",
   content: [{ type: "reasoning_text", text: "hidden" }],
 }
 
@@ -114,9 +116,12 @@ test("clears GPT reasoning content by default and keeps other fields", async () 
   expect(outbound.input[40]?.content).toEqual([])
   expect(outbound.input[40]?.id).toBe("reasoning-40")
   expect(outbound.input[40]?.summary).toEqual([])
+  expect(Object.hasOwn(outbound.input[40] ?? {}, "encrypted_content")).toBe(
+    false,
+  )
   expect(outbound.input[39]).toEqual(messageEntry(39))
   expect(infoMock).toHaveBeenCalledWith(
-    "GPT reasoning content stripped: model=gpt-5.6-terra indices=[40] items=1 contentParts=1",
+    "GPT reasoning sanitized: model=gpt-5.6-terra indices=[40] items=1 contentParts=1 encryptedContent=1",
   )
 })
 
@@ -127,8 +132,12 @@ test("keeps the original request bytes when the switch is disabled", async () =>
   const { text } = await send(body)
 
   expect(text).toBe(body)
+  const outbound = JSON.parse(text) as {
+    input: Array<Record<string, unknown>>
+  }
+  expect(outbound.input[40]?.encrypted_content).toBe("cipher-40")
   expect(infoMock).not.toHaveBeenCalledWith(
-    expect.stringContaining("GPT reasoning content stripped"),
+    expect.stringContaining("GPT reasoning sanitized"),
   )
 })
 
@@ -160,7 +169,10 @@ test("applies alias rewrite and reasoning cleanup together", async () => {
 
   expect(outbound.model).toBe("gpt-5.6-luna")
   expect(outbound.input[40]?.content).toEqual([])
+  expect(Object.hasOwn(outbound.input[40] ?? {}, "encrypted_content")).toBe(
+    false,
+  )
   expect(infoMock).toHaveBeenCalledWith(
-    "GPT reasoning content stripped: model=gpt-5.6-luna indices=[40] items=1 contentParts=1",
+    "GPT reasoning sanitized: model=gpt-5.6-luna indices=[40] items=1 contentParts=1 encryptedContent=1",
   )
 })

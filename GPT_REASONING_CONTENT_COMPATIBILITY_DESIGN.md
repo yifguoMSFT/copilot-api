@@ -1,10 +1,12 @@
 # GPT 混用历史 reasoning content 兼容方案
 
-状态：设计，尚未实现。按用户要求，实现后默认开启，可手动关闭。
+状态：已实现并默认开启，可手动关闭。首版只清空 `content`；用户在清空后再次遇到 `Encrypted content could not be decrypted or parsed`，因此同一开关扩展到同时删除同一条目的 `encrypted_content`。
 
 ## 1. 问题与证据边界
 
 用户报告：混用 DeepSeek 后切回 GPT，请求在生成前被拒绝，错误指向 `input[40].content`，要求为空但实际有 1 项。重试复现；切回 DeepSeek 又出现缺少 `call_id` 的另一项错误。
+
+清理 `content` 之后出现第二个错误：`The encrypted content c577...77-0 could not be verified. Reason: Encrypted content could not be decrypted or parsed.` 这是同一类原因的另一半——条目上仍带有其他 provider 产生、GPT 无法解密验证的 `encrypted_content`。
 
 当前推测是历史 reasoning 条目的非空 `content` 与目标 GPT 接口不兼容。尚未取得失败请求的结构化样本，不能只凭字段路径认定 `input[40]` 一定是 reasoning。实施验证前应确认该项的 `type` 和 content 类型；只记录结构，不输出历史正文。
 
@@ -40,7 +42,9 @@
 4. 请求的 `input` 是数组。
 5. 某个 input 元素是对象，`type === "reasoning"`，且 `content` 是长度大于 0 的数组。
 
-将所有符合条件的条目的 `content` 替换为 `[]`。选择清空数组而非删除整个 item，使数组顺序和 item 标识保持原样；也不把 content 改为 null。是否被目标接口接受，必须用真实失败请求验证。
+将所有符合条件的条目的 `content` 替换为 `[]`，并删除同一 item 上的 `encrypted_content`。前者解决 `input[n].content` 必须为空的报错，后者解决 `Encrypted content could not be decrypted or parsed`：另一 provider 产生的密文 GPT 无法解密验证，留着只会让请求继续失败。选择清空数组而非删除整个 item，使数组顺序和 item 标识保持原样；也不把 content 改为 null。是否被目标接口接受，必须用真实失败请求验证。
+
+`encrypted_content` 只在同一条目已被判定需要清理时删除。`content` 本就为空、只带 `encrypted_content` 的 reasoning 条目不处理，因此 GPT 自身产生的加密推理仍能原样回传并保持连续性。
 
 本规则按结构匹配，不声称可以识别某条 reasoning 来自 DeepSeek。启用期间，GPT 自己产生但符合条件的历史 reasoning 也会清空 content。这是默认开启的明确作用范围；需要完整透传时显式设为 false。
 
@@ -53,6 +57,7 @@
   "type": "reasoning",
   "id": "reasoning-item-id",
   "summary": [],
+  "encrypted_content": "cipher-from-another-provider",
   "content": [{ "type": "reasoning_text", "text": "示例历史内容" }]
 }
 ```
@@ -68,7 +73,7 @@
 }
 ```
 
-只丢弃出站请求中该字段的数组内容。保留 `id`、`summary`、`encrypted_content` 以及所有其他字段；不修改磁盘上的 Codex 历史、不改模型输出、不删除整个 reasoning item。
+只丢弃出站请求中该条目的 `content` 数组内容与 `encrypted_content`。保留 `id`、`summary` 以及所有其他字段；不修改磁盘上的 Codex 历史、不改模型输出、不删除整个 reasoning item。
 
 普通 message 的 content、工具定义、namespace、工具调用及结果、`call_id`、`previous_response_id` 和 `conversation` 均维持现有透传行为。字符串形式的 input、空 content、缺失 content 或非数组 content 不处理。
 
@@ -82,13 +87,14 @@
 
 在 `src/routes/responses/handler.ts` 的 `resolveResponseModel` 中，完成 `resolveModelRoute` 后、当前“上游模型名未改变则直接返回原 body”的分支之前执行清理。
 
-建议把内容变换放在 `src/routes/responses/gpt-reasoning-content.ts` 的纯函数中：接收 input，返回 input、变更索引和丢弃的 content 元素数量；不发网络请求，不读写配置或会话文件，不原地修改传入对象。
+建议把内容变换放在 `src/routes/responses/gpt-reasoning-content.ts` 的纯函数中：接收 input，返回 input、变更索引、丢弃的 content 元素数量和删除的 encrypted_content 数量；不发网络请求，不读写配置或会话文件，不原地修改传入对象。
 
 处理顺序：
 
 ```text
 解析 JSON → 解析 provider 和上游模型 → 检查手动开关及 GPT 路由
-         → 清空匹配的 reasoning.content → 与模型别名改写合并序列化
+         → 清空匹配的 reasoning.content 并删除其 encrypted_content
+         → 与模型别名改写合并序列化
          → 使用既有 Copilot transport 发送
 ```
 
@@ -99,7 +105,7 @@
 只在发生清理时记录一条结构日志，例如：
 
 ```text
-GPT reasoning content stripped: model=gpt-5.6-luna indices=[40] items=1 contentParts=1
+GPT reasoning sanitized: model=gpt-5.6-luna indices=[40] items=1 contentParts=1 encryptedContent=1
 ```
 
 不记录 content 正文、API Key 或整份请求。日志表示代理做了变换，不表示历史续接已修复。发生失败时仍原样返回上游错误；不自动切换模型、不自动删除更多内容、不自动重试。
@@ -112,7 +118,9 @@ GPT reasoning content stripped: model=gpt-5.6-luna indices=[40] items=1 contentP
 | --- | --- |
 | 显式关闭，GPT 请求包含非空 reasoning content | 原请求字节不变 |
 | 字段省略、无配置文件或 handler legacy fallback，GPT 请求有匹配项 | 默认执行清理 |
-| 开启，Copilot GPT，reasoning 位于索引 40 | 仅该项 content 变为 [] |
+| 开启，Copilot GPT，reasoning 位于索引 40 | 仅该项 content 变为 []，且 encrypted_content 被删除 |
+| 开启，reasoning 的 content 本就为空但带 encrypted_content | 不处理，密文保留 |
+| 开启，reasoning 有 content 但没有 encrypted_content | 清空 content，计数为 0 |
 | 开启，多个索引含非空 reasoning content | 清空所有匹配项，顺序、id 和其他字段不变 |
 | 开启，普通 message / tool item 含 content | 保持原样 |
 | 开启，input 为字符串或 content 缺失、空、非数组 | 保持原样 |
@@ -127,8 +135,8 @@ GPT reasoning content stripped: model=gpt-5.6-luna indices=[40] items=1 contentP
 
 ## 6. 限制与回滚
 
-此方案只处理 reasoning.content 非空这一类问题。缺失 `call_id` 是独立的工具历史完整性问题；不猜测或补造 ID，也不承诺单靠本开关修复所有混用历史。
+此方案处理 reasoning 条目上的两类 provider 不兼容：`content` 非空，以及无法被目标模型解密验证的 `encrypted_content`。缺失 `call_id` 是独立的工具历史完整性问题；不猜测或补造 ID，也不承诺单靠本开关修复所有混用历史。
 
-如果目标项不是 reasoning，则此规则不会修改它，需要根据实际类型另行分析。保留的 encrypted_content、summary 等字段若仍被上游拒绝，也应独立诊断，不扩大本次丢弃范围。
+如果目标项不是 reasoning，则此规则不会修改它，需要根据实际类型另行分析。`content` 为空的 reasoning 条目不在处理范围内，其 `encrypted_content` 会原样保留；若这类条目仍被上游拒绝，属于另一种情况，需要新的证据与设计。
 
 清空 content 会让目标 GPT 看不到这些历史推理内容，但用户消息和工具记录仍保留。关闭配置项并重启代理即可恢复原样转发，无需还原 Codex 历史文件。

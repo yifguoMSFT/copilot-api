@@ -7,7 +7,18 @@ export const deepSeekCodexModels: Array<Record<string, unknown>> = [
     description: "DeepSeek Responses model with text and image input",
     context_window: 128_000,
     input_modalities: ["text", "image"],
-    supported_reasoning_levels: ["low", "medium", "high"],
+    default_reasoning_level: "high",
+    supported_reasoning_levels: [
+      { effort: "low", description: "Fast responses with lighter reasoning" },
+      {
+        effort: "high",
+        description: "Extra high reasoning depth for complex problems",
+      },
+      {
+        effort: "max",
+        description: "Maximum reasoning depth for the hardest problems",
+      },
+    ],
   },
   {
     slug: "deepseek-v4-pro",
@@ -15,6 +26,17 @@ export const deepSeekCodexModels: Array<Record<string, unknown>> = [
     description: "DeepSeek Responses reasoning model",
     context_window: 128_000,
     input_modalities: ["text"],
-    supported_reasoning_levels: ["low", "medium", "high"],
+    default_reasoning_level: "high",
+    supported_reasoning_levels: [
+      { effort: "low", description: "Fast responses with lighter reasoning" },
+      {
+        effort: "high",
+        description: "Extra high reasoning depth for complex problems",
+      },
+      {
+        effort: "max",
+        description: "Maximum reasoning depth for the hardest problems",
+      },
+    ],
   },
 ]

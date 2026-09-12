@@ -3,6 +3,7 @@ export interface ReasoningContentStrip {
   changed: boolean
   indices: Array<number>
   contentParts: number
+  encryptedContent: number
 }
 
 export function stripReasoningContent(
@@ -10,6 +11,7 @@ export function stripReasoningContent(
 ): ReasoningContentStrip {
   const indices: Array<number> = []
   let contentParts = 0
+  let encryptedContent = 0
   const nextInput = input.map((item, index) => {
     if (item === null || typeof item !== "object" || Array.isArray(item)) {
       return item
@@ -20,11 +22,28 @@ export function stripReasoningContent(
 
     indices.push(index)
     contentParts += entry.content.length
-    return { ...entry, content: [] }
+    const sanitized: Record<string, unknown> = { ...entry, content: [] }
+    if (Object.hasOwn(sanitized, "encrypted_content")) {
+      encryptedContent += 1
+      delete sanitized.encrypted_content
+    }
+    return sanitized
   })
 
   if (indices.length === 0) {
-    return { input, changed: false, indices, contentParts: 0 }
+    return {
+      input,
+      changed: false,
+      indices,
+      contentParts: 0,
+      encryptedContent: 0,
+    }
   }
-  return { input: nextInput, changed: true, indices, contentParts }
+  return {
+    input: nextInput,
+    changed: true,
+    indices,
+    contentParts,
+    encryptedContent,
+  }
 }

@@ -59,23 +59,23 @@ bun install
 
 ## Codex model catalog
 
-On startup, copilot-api can fetch the [upstream Codex model catalog](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json), merge configured custom files and enabled DeepSeek metadata, and atomically write the configured output. Copy `config.example.json`, then select it with `--config` or `COPILOT_API_CONFIG`; paths inside the file are resolved relative to that file.
+On startup, copilot-api fetches the [upstream Codex model catalog](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json), merges `codex-models-custom.json` from its working directory, and atomically writes `codex-models.json` beside it. This catalog refresh is independent of `config.json`.
 
 The custom file uses the same `{ "models": [...] }` structure. Custom entries replace upstream entries with the same `slug`; other upstream entries and metadata are preserved. The included `gemini-3.8-flash` entry adapts the Codex instructions for Gemini 3.8 Flash and supports thinking levels `low`, `medium`, and `high` (not `minimal`). Its `context_window` stays at 272000, while `max_context_window` records the native input limit of 1048576. [Google's model reference](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash) specifies a 65536-token text output limit and text, image, video, audio, and PDF inputs. The catalog exposes text, image, and audio; video/PDF support and output limits are documented in the entry rather than represented by unsupported Codex schema fields. Actual attachment support depends on the client and provider. Its copied instructions remain local and should be refreshed when needed.
 
 To use it, set a top-level entry in your Codex `config.toml`, adjusting the absolute path for your checkout:
 
 ```toml
-model_catalog_json = "/absolute/path/to/generated/codex-models.json"
+model_catalog_json = "/absolute/path/to/copilot-api/codex-models.json"
 ```
 
-Edit a file listed in `catalog.customFiles` for custom models. Remote failures use the last upstream cache or generate from valid local sources; output replacement remains atomic.
+Edit `codex-models-custom.json` in the copilot-api working directory to add custom models. Remote failures keep the existing output; replacement remains atomic.
 
 Codex consumes the generated snapshot through `model_catalog_json`, which replaces its default catalog. Restart Codex after a refresh to load it. Use `codex debug models` to verify the effective catalog. Catalog entries do not guarantee that the selected provider supports every listed model.
 
 ## DeepSeek routing
 
-Enable DeepSeek in the JSON configuration and provide its key to the proxy process, for example `DEEPSEEK_API_KEY`. Codex should keep one gateway provider pointing at this server; selecting `deepseek-flash` or `deepseek-v4-pro` routes the request to DeepSeek, while other models continue to use Copilot. This allows model switching without changing the Codex profile or endpoint.
+Enable DeepSeek in the JSON configuration and set its key in `providers.deepseek.apiKey`. Codex should keep one gateway provider pointing at this server; selecting `deepseek-flash` or `deepseek-v4-pro` routes the request to DeepSeek, while other models continue to use Copilot. This allows model switching without changing the Codex profile or endpoint.
 
 DeepSeek routing currently applies to the Responses endpoint. DeepSeek does not support stored `previous_response_id`/`conversation` state, arbitrary built-in tools, or opaque history from another provider. Start a new task or send complete compatible text/tool history when changing providers.
 
@@ -87,7 +87,7 @@ Older versions always used `E:/workshop/copilot-api`. Choose the intended old cu
 
 ## GPT reasoning content compatibility
 
-After a task mixes providers, history can contain reasoning items with non-empty `content`. The GPT endpoint rejects that shape with `input[n].content` must be empty, so switching back from DeepSeek used to fail before the model produced any output. copilot-api now clears that field by default for Copilot requests whose resolved upstream model starts with `gpt-`:
+After a task mixes providers, history can contain reasoning items that the GPT endpoint refuses: non-empty `content` is rejected with `input[n].content` must be empty, and another provider's `encrypted_content` fails as `Encrypted content could not be decrypted or parsed`. Both used to stop the request before the model produced any output. copilot-api now sanitizes those items by default for Copilot requests whose resolved upstream model starts with `gpt-`:
 
 ```json
 {
@@ -100,7 +100,7 @@ After a task mixes providers, history can contain reasoning items with non-empty
 }
 ```
 
-Only `input[i]` entries with `"type": "reasoning"` and a non-empty `content` array are changed, and only their `content` becomes `[]`. Item order, ids, summaries, encrypted content, tool definitions, tool calls, tool results and every other field are forwarded unchanged. When nothing matches, the original request bytes are forwarded as-is, and DeepSeek requests plus non-GPT Copilot models are never rewritten.
+For each `input[i]` entry with `"type": "reasoning"` and a non-empty `content` array, `content` becomes `[]` and `encrypted_content` is removed. Reasoning items that already have empty content are left untouched, so GPT's own encrypted reasoning still round-trips and keeps its continuity. Item order, ids, summaries, tool definitions, tool calls, tool results and every other field are forwarded unchanged. When nothing matches, the original request bytes are forwarded as-is, and DeepSeek requests plus non-GPT Copilot models are never rewritten.
 
 Set `"stripReasoningContentForGpt": false` to forward such history untouched, then restart the proxy. The setting only changes the outbound request; Codex's stored task history is not modified, so the original task can still be resumed after reverting.
 
