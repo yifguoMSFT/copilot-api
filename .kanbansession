@@ -1,9 +1,9 @@
 {
   "sessions": {
     "01a0939a-6997-7291-851e-f6d25aed593b": {
-      "blueprint_path": "I:\\Cache\\workshop\\copilot-api\\gemini-interactions-v1-codex-cli-test.kanban.json",
-      "last_execution_fingerprint": "605222f3ee9b77a758a0f86efe48aed60db41c7a4ac5b99de03c23fad4da9f54",
-      "registration_id": "1789203589785842300",
+      "blueprint_path": "I:\\Cache\\workshop\\copilot-api\\interactions-state-preservation-fixes.kanban.json",
+      "last_execution_fingerprint": "bee02bb1cdaa10b6fcdbac46c48d9eea5bd512a4248181da9e8a23f093755bed",
+      "registration_id": "1789204144067595200",
       "unchanged_stop_count": 0
     }
   }
