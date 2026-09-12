@@ -187,15 +187,35 @@ test("fails when Codex is enabled without a gateway key", async () => {
   )
 })
 
-test("fails when an enabled Codex provider has no model", async () => {
+test("accepts an enabled Codex provider without an explicit model list", async () => {
   const file = await fixture({
     version: 1,
-    defaults: { providers: { codex: { enabled: true } } },
+    defaults: {
+      providers: { codex: { enabled: true, models: undefined } },
+    },
   })
 
-  expect(loadRuntimeConfig({ configPath: file, env: {} })).rejects.toThrow(
-    "at least one configured model",
-  )
+  const config = await loadRuntimeConfig({
+    configPath: file,
+    env: { COPILOT_API_GATEWAY_API_KEY: "gateway-secret" },
+  })
+
+  // An omitted list is the documented "every official catalog model" default.
+  expect(config.providers.codex.models).toEqual([])
+})
+
+test("rejects an explicitly empty Codex model list", async () => {
+  const file = await fixture({
+    version: 1,
+    defaults: { providers: { codex: { enabled: true, models: [] } } },
+  })
+
+  expect(
+    loadRuntimeConfig({
+      configPath: file,
+      env: { COPILOT_API_GATEWAY_API_KEY: "gateway-secret" },
+    }),
+  ).rejects.toThrow()
 })
 
 test("refuses to point the ChatGPT credential at another origin", async () => {

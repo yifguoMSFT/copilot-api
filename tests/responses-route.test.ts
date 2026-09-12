@@ -41,7 +41,13 @@ afterAll(() => {
   consola.info = originalInfo
 })
 
-const post = (path: string, body = "{}", signal?: AbortSignal) =>
+// The Responses API requires a model; these cases exercise transport
+// behaviour, so they carry a routable Copilot model.
+const post = (
+  path: string,
+  body = '{"model":"gpt-copilot"}',
+  signal?: AbortSignal,
+) =>
   server.request(
     new Request(`http://localhost${path}`, {
       method: "POST",
@@ -131,6 +137,20 @@ describe("Responses routes", () => {
     },
   )
 
+  test("rejects a request without a model before reaching an upstream", async () => {
+    const response = await post("/v1/responses", "{}")
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error: {
+        code: "invalid_model",
+        message: "Responses request must include a model",
+        type: "error",
+      },
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   test("resolves the codex-auto-review model alias", async () => {
     const response = await post(
       "/v1/responses",
@@ -201,7 +221,10 @@ describe("Responses routes", () => {
       ),
     )
 
-    const response = await post("/v1/responses", '{"stream":true}')
+    const response = await post(
+      "/v1/responses",
+      '{"model":"gpt-copilot","stream":true}',
+    )
 
     expect(response.headers.get("content-type")).toBe("text/event-stream")
     expect(await response.text()).toBe(event)
@@ -217,7 +240,10 @@ describe("Responses routes", () => {
         }),
       ),
     )
-    const response = await post("/v1/responses", '{"stream":true}')
+    const response = await post(
+      "/v1/responses",
+      '{"model":"gpt-copilot","stream":true}',
+    )
     const output = await response.text()
 
     expect(output).toContain('"item":{"id":"first"}')
@@ -236,7 +262,10 @@ describe("Responses routes", () => {
     )
     state.responsesStableItemIds = false
 
-    const response = await post("/v1/responses", '{"stream":true}')
+    const response = await post(
+      "/v1/responses",
+      '{"model":"gpt-copilot","stream":true}',
+    )
 
     expect(await response.text()).toBe(event)
   })
@@ -298,7 +327,7 @@ describe("Responses routes", () => {
   test("propagates request cancellation to upstream fetch", async () => {
     const controller = new AbortController()
 
-    await post("/v1/responses", "{}", controller.signal)
+    await post("/v1/responses", '{"model":"gpt-copilot"}', controller.signal)
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(init.signal).toBe(controller.signal)
@@ -308,7 +337,7 @@ describe("Responses routes", () => {
     const controller = new AbortController()
     controller.abort()
 
-    await post("/v1/responses", "{}", controller.signal)
+    await post("/v1/responses", '{"model":"gpt-copilot"}', controller.signal)
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(init.signal).toBeUndefined()

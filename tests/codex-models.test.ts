@@ -5,12 +5,21 @@ import os from "node:os"
 import path from "node:path"
 
 import {
+  buildCatalogEntries,
   buildCodexModelEntries,
   codexModelCapabilities,
   findCodexCatalogGaps,
+  loadBaseCatalog,
   loadCodexCatalog,
+  refreshUpstreamCatalog,
   refreshCodexModels,
+  writePublishedCatalog,
 } from "../src/lib/codex-models"
+import { buildPublishedModels } from "../src/lib/model-sources"
+import {
+  defaultProviderConfig,
+  type RuntimeConfig,
+} from "../src/lib/runtime-config"
 
 let directory: string
 let fetchMock: ReturnType<typeof spyOn<typeof globalThis, "fetch">>
@@ -259,4 +268,235 @@ test("reports the configured models the App catalogue does not describe", async 
   ).toEqual(["gpt-unlisted"])
   expect(await findCodexCatalogGaps(["previous"], catalogFile)).toEqual([])
   expect(warnMock).not.toHaveBeenCalled()
+})
+
+const codexEnabledConfig = (models: Array<string> = []): RuntimeConfig => ({
+  environment: "test",
+  providers: {
+    ...defaultProviderConfig().providers,
+    codex: {
+      ...defaultProviderConfig().providers.codex,
+      enabled: true,
+      gatewayApiKey: "gateway-key",
+      models,
+    },
+  },
+})
+
+const baseCatalogFixture = async (): Promise<{
+  base: Awaited<ReturnType<typeof loadBaseCatalog>>
+  cacheFile: string
+}> => {
+  const cacheFile = path.join(directory, "codex-models-upstream.json")
+  await fs.writeFile(
+    cacheFile,
+    JSON.stringify({
+      version: 2,
+      models: [
+        { slug: "gpt-5.6-luna", display_name: "Luna", prefer_websockets: true },
+        { slug: "gpt-5.5", display_name: "GPT-5.5" },
+        { slug: "sol-fast", display_name: "upstream duplicate" },
+      ],
+    }),
+  )
+  const base = await loadBaseCatalog({
+    customFiles: [path.join(directory, "codex-models-custom.json")],
+    extensionModels: [{ slug: "deepseek-flash", display_name: "DeepSeek" }],
+    upstreamCacheFile: cacheFile,
+  })
+  return { base, cacheFile }
+}
+
+test("separates official, custom and extension catalog sources", async () => {
+  const { base } = await baseCatalogFixture()
+
+  expect(base.officialModels).toEqual(["gpt-5.6-luna", "gpt-5.5", "sol-fast"])
+  expect(base.customModels).toEqual([])
+  expect(base.extensionModels).toEqual(["deepseek-flash"])
+  // A custom definition for an official slug overrides it without losing
+  // suffix eligibility.
+  expect(base.entries.get("sol-fast")).toMatchObject({
+    model_messages: { instructions_template: "custom" },
+  })
+  expect(base.metadata).toEqual({ version: 2 })
+})
+
+test("keeps custom-only slugs separate from the official model set", async () => {
+  const customFile = path.join(directory, "extra-custom.json")
+  await fs.writeFile(
+    customFile,
+    JSON.stringify({ models: [{ slug: "local-passthrough" }] }),
+  )
+
+  const base = await loadBaseCatalog({
+    customFiles: [customFile],
+    upstreamCacheFile: path.join(directory, "codex-models-upstream.json"),
+  })
+
+  expect(base.officialModels).toEqual([])
+  expect(base.customModels).toEqual(["local-passthrough"])
+})
+
+test("publishes one suffixed definition per serving provider", async () => {
+  const { base } = await baseCatalogFixture()
+  const config = codexEnabledConfig()
+  const published = buildPublishedModels({
+    catalog: base.entries,
+    config,
+    customModels: base.customModels,
+    copilotModels: ["gpt-5.6-luna"],
+    officialModels: base.officialModels,
+  })
+
+  const models = buildCatalogEntries({ base, published })
+  const slugs = models.map((model) => String(model.slug))
+
+  expect(slugs.toSorted()).toEqual([
+    "deepseek-flash",
+    "gpt-5.5(codex)",
+    "gpt-5.6-luna(codex)",
+    "gpt-5.6-luna(copilot)",
+    "sol-fast(codex)",
+  ])
+  // The suffix carries the official definition and its display name.
+  expect(models.find((model) => model.slug === "gpt-5.6-luna(codex)")) //
+    .toMatchObject({
+      display_name: "Luna(codex)",
+      prefer_websockets: true,
+      slug: "gpt-5.6-luna(codex)",
+    })
+  // Another provider's catalog entry keeps its own id.
+  expect(models.find((model) => model.slug === "deepseek-flash")).toMatchObject(
+    { display_name: "DeepSeek" },
+  )
+})
+
+test("publishes bare definitions while the Codex provider is disabled", async () => {
+  const { base } = await baseCatalogFixture()
+  const published = buildPublishedModels({
+    config: {
+      environment: "test",
+      providers: defaultProviderConfig().providers,
+    },
+    officialModels: base.officialModels,
+  })
+
+  const models = buildCatalogEntries({ base, published })
+  expect(models.map((model) => String(model.slug))).toEqual([
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "sol-fast",
+    "deepseek-flash",
+  ])
+})
+
+test("regenerating from the raw base never doubles a suffix", async () => {
+  const { base } = await baseCatalogFixture()
+  const config = codexEnabledConfig(["gpt-5.6-luna", "gpt-5.5"])
+  const published = buildPublishedModels({
+    catalog: base.entries,
+    config,
+    customModels: base.customModels,
+    copilotModels: ["gpt-5.6-luna"],
+    officialModels: base.officialModels,
+  })
+  const outputFile = path.join(directory, "generated", "codex-models.json")
+
+  await writePublishedCatalog({ base, outputFile, published })
+  const first = await fs.readFile(outputFile)
+  await writePublishedCatalog({ base, outputFile, published })
+  const second = await fs.readFile(outputFile, "utf8")
+
+  expect(JSON.parse(second)).toEqual(JSON.parse(first.toString()))
+  expect(second).not.toContain("(codex)(codex)")
+  expect(second).toContain('"version": 2')
+  expect(
+    (await fs.readdir(path.dirname(outputFile))).some((name) =>
+      name.endsWith(".tmp"),
+    ),
+  ).toBe(false)
+})
+
+test("remaps structured model references to the same source", async () => {
+  const cacheFile = path.join(directory, "codex-models-upstream.json")
+  await fs.writeFile(
+    cacheFile,
+    JSON.stringify({
+      models: [
+        {
+          auto_review_model_override: "gpt-5.6-terra",
+          slug: "gpt-5.4",
+          upgrade: {
+            migration_markdown: "Switch to GPT-5.6 Terra",
+            model: "gpt-5.6-terra",
+          },
+        },
+        { slug: "gpt-5.6-terra" },
+        {
+          slug: "retired-only",
+          upgrade: { model: "gpt-not-published" },
+        },
+      ],
+    }),
+  )
+  const base = await loadBaseCatalog({
+    customFiles: [],
+    upstreamCacheFile: cacheFile,
+  })
+  const published = buildPublishedModels({
+    catalog: base.entries,
+    config: codexEnabledConfig(),
+    officialModels: base.officialModels,
+  })
+
+  const models = buildCatalogEntries({ base, published })
+  const codex = models.find((model) => model.slug === "gpt-5.4(codex)")
+
+  expect(codex).toMatchObject({
+    auto_review_model_override: "gpt-5.6-terra(codex)",
+    upgrade: {
+      // Free-form text keeps its original wording.
+      migration_markdown: "Switch to GPT-5.6 Terra",
+      model: "gpt-5.6-terra(codex)",
+    },
+  })
+  // A reference with no same-source target is dropped, not left dangling.
+  expect(
+    models.find((model) => model.slug === "retired-only(codex)"),
+  ).not.toHaveProperty("upgrade")
+})
+
+test("refreshUpstreamCatalog caches a successful fetch and keeps the file on failure", async () => {
+  const cacheFile = path.join(directory, "cache", "upstream.json")
+  fetchMock.mockResolvedValueOnce(
+    Response.json({ models: [{ slug: "gpt-5.6-luna" }] }),
+  )
+
+  await refreshUpstreamCatalog({ cacheFile })
+  expect(JSON.parse((await fs.readFile(cacheFile)).toString())).toEqual({
+    models: [{ slug: "gpt-5.6-luna" }],
+  })
+
+  fetchMock.mockRejectedValueOnce(new TypeError("offline"))
+  await refreshUpstreamCatalog({ cacheFile })
+  expect(JSON.parse((await fs.readFile(cacheFile)).toString())).toEqual({
+    models: [{ slug: "gpt-5.6-luna" }],
+  })
+  expect(warnMock).toHaveBeenCalledTimes(1)
+})
+
+test("reports a corrupted base cache instead of publishing stale ids", async () => {
+  const cacheFile = path.join(directory, "codex-models-upstream.json")
+  await fs.writeFile(cacheFile, "not json")
+
+  expect(
+    loadBaseCatalog({ customFiles: [], upstreamCacheFile: cacheFile }),
+  ).rejects.toThrow()
+
+  expect(
+    await loadBaseCatalog({
+      customFiles: [],
+      upstreamCacheFile: path.join(directory, "missing-upstream.json"),
+    }),
+  ).toMatchObject({ officialModels: [] })
 })

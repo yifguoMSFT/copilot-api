@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import consola from "consola"
 
+import { buildPublishedModels } from "../src/lib/model-sources"
 import { defaultProviderConfig } from "../src/lib/runtime-config"
 import { state } from "../src/lib/state"
 import { server } from "../src/server"
@@ -23,6 +24,7 @@ globalThis.fetch = fetchMock as unknown as typeof fetch
 consola.info = infoMock as unknown as typeof consola.info
 
 const GATEWAY_KEY = "gateway-secret"
+const CODEX_MODEL = "codex-test-model(codex)"
 
 const snapshot = (
   overrides: Partial<CodexAuthSnapshot> = {},
@@ -69,6 +71,11 @@ beforeEach(() => {
     environment: "test",
     providers: { ...defaultProviderConfig().providers, codex: codexConfig() },
   }
+  state.publishedModels = buildPublishedModels({
+    config: state.runtimeConfig,
+    officialModels: ["codex-test-model"],
+    copilotModels: [],
+  })
   state.codexAuthManager = authManagerWith(() => Promise.resolve(snapshot()))
 })
 
@@ -76,6 +83,7 @@ afterAll(() => {
   globalThis.fetch = originalFetch
   consola.info = originalInfo
   state.codexAuthManager = undefined
+  state.publishedModels = undefined
 })
 
 const post = (body: string, headers: Record<string, string> = {}) =>
@@ -95,13 +103,13 @@ const forwarded = (index = 0): [string, RequestInit] =>
   fetchMock.mock.calls[index] as [string, RequestInit]
 
 describe("Codex passthrough forwarding", () => {
-  test("posts the untouched body to the configured Codex endpoint", async () => {
-    const body = `{
-      "model": "codex-test-model",
-      "input": "hello 世界",
-      "stream": true,
-      "unknown_field": {"nested": [1, 2, 3]}
-    }`
+  test("strips the source suffix and posts the rest of the payload", async () => {
+    const body = JSON.stringify({
+      model: CODEX_MODEL,
+      input: "hello 世界",
+      stream: true,
+      unknown_field: { nested: [1, 2, 3], text: CODEX_MODEL },
+    })
 
     const response = await post(body)
 
@@ -111,11 +119,17 @@ describe("Codex passthrough forwarding", () => {
     expect(url).toBe("https://chatgpt.com/backend-api/codex/responses")
     expect(init.method).toBe("POST")
     expect(init.redirect).toBe("manual")
-    expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe(body)
+    expect(await new Response(init.body).json()).toEqual({
+      model: "codex-test-model",
+      input: "hello 世界",
+      stream: true,
+      // Only the top-level model is rewritten; other text stays untouched.
+      unknown_field: { nested: [1, 2, 3], text: CODEX_MODEL },
+    })
   })
 
   test("injects the stored credential and replaces client credentials", async () => {
-    await post(JSON.stringify({ model: "codex-test-model" }), {
+    await post(JSON.stringify({ model: CODEX_MODEL }), {
       "chatgpt-account-id": "attacker-account",
       cookie: "session=attacker",
       "proxy-authorization": "Basic attacker",
@@ -142,7 +156,7 @@ describe("Codex passthrough forwarding", () => {
       Promise.resolve(snapshot({ accountId: undefined })),
     )
 
-    await post(JSON.stringify({ model: "codex-test-model" }), {
+    await post(JSON.stringify({ model: CODEX_MODEL }), {
       "chatgpt-account-id": "attacker-account",
     })
 
@@ -169,7 +183,7 @@ describe("Codex passthrough forwarding", () => {
       ),
     )
 
-    const response = await post(JSON.stringify({ model: "codex-test-model" }))
+    const response = await post(JSON.stringify({ model: CODEX_MODEL }))
 
     expect(response.headers.get("content-type")).toBe("text/event-stream")
     expect(await response.text()).toBe(sse)
@@ -188,7 +202,7 @@ describe("Codex passthrough forwarding", () => {
       ),
     )
 
-    const response = await post(JSON.stringify({ model: "codex-test-model" }))
+    const response = await post(JSON.stringify({ model: CODEX_MODEL }))
 
     expect(response.headers.get("content-encoding")).toBeNull()
     expect(response.headers.get("content-length")).toBeNull()
@@ -200,7 +214,7 @@ describe("Codex passthrough gateway", () => {
   test("rejects a request without the gateway key", async () => {
     const response = await server.request(
       new Request("http://localhost/v1/responses", {
-        body: JSON.stringify({ model: "codex-test-model" }),
+        body: JSON.stringify({ model: CODEX_MODEL }),
         headers: { "content-type": "application/json" },
         method: "POST",
       }),
@@ -218,7 +232,7 @@ describe("Codex passthrough gateway", () => {
   })
 
   test("rejects a wrong gateway key without calling the upstream", async () => {
-    const response = await post(JSON.stringify({ model: "codex-test-model" }), {
+    const response = await post(JSON.stringify({ model: CODEX_MODEL }), {
       authorization: "Bearer wrong-key",
     })
 
@@ -229,7 +243,7 @@ describe("Codex passthrough gateway", () => {
   test("accepts the gateway key from x-api-key", async () => {
     const response = await server.request(
       new Request("http://localhost/v1/responses", {
-        body: JSON.stringify({ model: "codex-test-model" }),
+        body: JSON.stringify({ model: CODEX_MODEL }),
         headers: {
           "content-type": "application/json",
           "x-api-key": GATEWAY_KEY,
@@ -272,7 +286,7 @@ describe("Codex passthrough authentication failures", () => {
       ),
     )
 
-    const response = await post(JSON.stringify({ model: "codex-test-model" }))
+    const response = await post(JSON.stringify({ model: CODEX_MODEL }))
 
     expect(response.status).toBe(503)
     expect(await response.json()).toEqual({
@@ -293,7 +307,7 @@ describe("Codex passthrough authentication failures", () => {
       ),
     )
 
-    const response = await post(JSON.stringify({ model: "codex-test-model" }))
+    const response = await post(JSON.stringify({ model: CODEX_MODEL }))
 
     expect(response.status).toBe(503)
     const payload = (await response.json()) as { error: { code: string } }
@@ -315,7 +329,7 @@ describe("Codex passthrough upstream responses", () => {
         ),
       )
 
-      const response = await post(JSON.stringify({ model: "codex-test-model" }))
+      const response = await post(JSON.stringify({ model: CODEX_MODEL }))
 
       expect(response.status).toBe(status)
       expect(await response.text()).toBe(
@@ -325,7 +339,7 @@ describe("Codex passthrough upstream responses", () => {
     },
   )
 
-  test("does not fall back to Copilot for a disabled Codex model", async () => {
+  test("rejects a Codex suffix while the provider is disabled", async () => {
     state.runtimeConfig = {
       environment: "test",
       providers: {
@@ -333,13 +347,55 @@ describe("Codex passthrough upstream responses", () => {
         codex: codexConfig({ enabled: false }),
       },
     }
+    // The published set is rebuilt for the disabled configuration, so the
+    // suffix is no longer a known model id at all.
+    state.publishedModels = buildPublishedModels({
+      config: state.runtimeConfig,
+      officialModels: ["codex-test-model"],
+      copilotModels: [],
+    })
 
-    const response = await post(JSON.stringify({ model: "codex-test-model" }))
+    const response = await post(JSON.stringify({ model: CODEX_MODEL }))
 
-    expect(response.status).toBe(500)
-    const payload = (await response.json()) as { error: { message: string } }
+    expect(response.status).toBe(400)
+    const payload = (await response.json()) as {
+      error: { code: string; message: string }
+    }
+    expect(payload.error.code).toBe("model_provider_disabled")
     expect(payload.error.message).toContain("Codex provider is disabled")
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test("routes a Copilot suffix to Copilot without the Codex gateway key", async () => {
+    state.runtimeConfig = {
+      environment: "test",
+      providers: {
+        ...defaultProviderConfig().providers,
+        codex: codexConfig({ models: ["codex-test-model"] }),
+      },
+    }
+    state.publishedModels = buildPublishedModels({
+      config: state.runtimeConfig,
+      officialModels: ["codex-test-model"],
+      copilotModels: ["codex-test-model"],
+    })
+    state.copilotToken = "copilot-token"
+    state.vsCodeVersion = "1.0.0"
+
+    const response = await server.request(
+      new Request("http://localhost/v1/responses", {
+        body: JSON.stringify({ model: "codex-test-model(copilot)" }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    const [url, init] = forwarded()
+    expect(url).not.toContain("chatgpt.com")
+    expect(await new Response(init.body).json()).toEqual({
+      model: "codex-test-model",
+    })
   })
 })
 

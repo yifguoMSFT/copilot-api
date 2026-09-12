@@ -3,10 +3,11 @@ import type { Context } from "hono"
 import consola from "consola"
 
 import { awaitApproval } from "~/lib/approval"
+import { HttpStatusError } from "~/lib/error"
 import { isModelAlias, resolveModelAlias } from "~/lib/model-aliases"
 import { resolveModelRoute, type ModelProvider } from "~/lib/model-routing"
 import { checkRateLimit } from "~/lib/rate-limit"
-import { defaultProviderConfig } from "~/lib/runtime-config"
+import { defaultProviderConfig, type RuntimeConfig } from "~/lib/runtime-config"
 import { state } from "~/lib/state"
 import { createCodexResponses } from "~/services/codex/forward-responses"
 import { createResponses } from "~/services/copilot/create-responses"
@@ -47,6 +48,7 @@ export async function handleResponse(c: Context): Promise<Response> {
     body: upstreamBody,
     requestedModel,
     provider,
+    upstreamModel,
   } = resolveResponseModel(body)
   const shouldLogContent =
     requestedModel !== undefined && isModelAlias(requestedModel)
@@ -68,28 +70,25 @@ export async function handleResponse(c: Context): Promise<Response> {
 
   const modelLabel = formatModelLabel(requestedModel)
   consola.info(`Request sent to ${modelLabel}`)
+  if (state.publishedModels?.suffixMode === true) {
+    consola.info(
+      `Model routed: ${requestedModel ?? "unknown"} → ${provider} (${upstreamModel ?? "unknown"})`,
+    )
+  }
   let upstream: Response
   if (provider === "codex") {
     const codexConfig = state.runtimeConfig?.providers.codex
     if (codexConfig === undefined) {
       throw new Error("Codex runtime configuration is not loaded")
     }
-    const unauthorized = authorizeCodexRequest(c.req.raw.headers, codexConfig)
-    if (unauthorized !== undefined) return unauthorized
-
-    try {
-      upstream = await createCodexResponses(upstreamBody, codexConfig, {
-        headers: c.req.raw.headers,
-        signal: upstreamSignal,
-      })
-    } catch (error) {
-      const authFailure = toCodexAuthErrorResponse(
-        error,
-        codexConfig.authProfile,
-      )
-      if (authFailure !== undefined) return authFailure
-      throw error
-    }
+    const forwarded = await forwardCodexRequest({
+      headers: c.req.raw.headers,
+      body: upstreamBody,
+      codexConfig,
+      signal: upstreamSignal,
+    })
+    if ("error" in forwarded) return forwarded.error
+    upstream = forwarded.upstream
   } else if (provider === "deepseek") {
     const deepSeekConfig = state.runtimeConfig?.providers.deepseek
     if (deepSeekConfig === undefined) {
@@ -125,6 +124,37 @@ export async function handleResponse(c: Context): Promise<Response> {
     statusText: upstream.statusText,
     headers,
   })
+}
+
+type CodexForwardResult = { upstream: Response } | { error: Response }
+
+/**
+ * Codex requests authenticate with the local credential store, so a gateway
+ * rejection is answered with the local error envelope instead of falling back
+ * to another provider.
+ */
+const forwardCodexRequest = async (request: {
+  headers: Headers
+  body: ArrayBuffer | string
+  codexConfig: RuntimeConfig["providers"]["codex"]
+  signal: AbortSignal | undefined
+}): Promise<CodexForwardResult> => {
+  const { body, codexConfig, headers, signal } = request
+  const unauthorized = authorizeCodexRequest(headers, codexConfig)
+  if (unauthorized !== undefined) return { error: unauthorized }
+
+  try {
+    return {
+      upstream: await createCodexResponses(body, codexConfig, {
+        headers,
+        signal,
+      }),
+    }
+  } catch (error) {
+    const authFailure = toCodexAuthErrorResponse(error, codexConfig.authProfile)
+    if (authFailure !== undefined) return { error: authFailure }
+    throw error
+  }
 }
 
 const buildForwardedHeaders = (upstream: Response): Headers => {
@@ -178,22 +208,35 @@ const resolveResponseModel = (
   body: ArrayBuffer | string
   requestedModel?: string
   provider: ModelProvider
+  upstreamModel?: string
 } => {
   const text = new TextDecoder().decode(body)
 
   try {
     const payload = JSON.parse(text) as Record<string, unknown>
     if (payload.model === undefined) {
-      return { body, provider: "copilot" }
+      throw new HttpStatusError(
+        400,
+        "Responses request must include a model",
+        "invalid_model",
+      )
     }
     if (typeof payload.model !== "string" || payload.model.length === 0) {
-      throw new Error("Responses model must be a non-empty string")
+      throw new HttpStatusError(
+        400,
+        "Responses model must be a non-empty string",
+        "invalid_model",
+      )
     }
     const config = state.runtimeConfig ?? {
       environment: "legacy",
       ...defaultProviderConfig(),
     }
-    const route = resolveModelRoute(payload.model, config)
+    const route = resolveModelRoute(
+      payload.model,
+      config,
+      state.publishedModels,
+    )
     let nextPayload: Record<string, unknown> = payload
     let changed = false
 
@@ -219,17 +262,27 @@ const resolveResponseModel = (
     }
 
     if (!changed) {
-      return { body, requestedModel: payload.model, provider: route.provider }
+      return {
+        body,
+        provider: route.provider,
+        requestedModel: payload.model,
+        upstreamModel: route.upstreamModel,
+      }
     }
 
     return {
       body: JSON.stringify(nextPayload),
-      requestedModel: payload.model,
       provider: route.provider,
+      requestedModel: payload.model,
+      upstreamModel: route.upstreamModel,
     }
   } catch (error) {
     if (error instanceof SyntaxError)
-      throw new Error("Responses request must be valid JSON")
+      throw new HttpStatusError(
+        400,
+        "Responses request must be valid JSON",
+        "invalid_model",
+      )
     throw error
   }
 }

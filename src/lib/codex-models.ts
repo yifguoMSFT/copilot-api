@@ -5,7 +5,10 @@ import { z } from "zod"
 
 import { deepSeekCodexModels } from "~/providers/deepseek/models"
 
+import type { ModelSource, PublishedModels } from "./model-sources"
+
 import { HTTPError } from "./error"
+import { formatSourceModel, parseSourceModel } from "./model-sources"
 
 const CATALOG_URL =
   "https://raw.githubusercontent.com/openai/codex/refs/heads/main/codex-rs/models-manager/models.json"
@@ -71,6 +74,18 @@ export function codexModelCapabilities(
   ) as CodexModelCapabilities
 }
 
+const readCatalogPayload = async (
+  file: string,
+): Promise<z.infer<typeof catalogSchema> | undefined> => {
+  const text = await fs.readFile(file, "utf8").catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+    throw error
+  })
+  if (text === undefined) return undefined
+
+  return catalogSchema.parse(JSON.parse(text))
+}
+
 /**
  * Reads the generated Codex catalog for descriptive metadata. A missing or
  * malformed file yields no metadata instead of failing the request: the
@@ -125,6 +140,212 @@ export async function findCodexCatalogGaps(
 ): Promise<Array<string>> {
   const catalog = await loadCodexCatalog(catalogFile)
   return models.filter((model) => !catalog.has(model))
+}
+
+/**
+ * The model definitions the source suffixes are derived from, kept separate
+ * from the generated catalog so suffixes are never applied twice.
+ */
+export interface BaseCatalog {
+  /** Slugs that exist beyond the official catalog. */
+  customModels: Array<string>
+  entries: Map<string, CodexCatalogEntry>
+  /** Catalog ids owned by another provider, such as DeepSeek entries. */
+  extensionModels: Array<string>
+  /** Top-level catalog fields other than `models`, preserved on write. */
+  metadata: Record<string, unknown>
+  /** Official catalog slugs, in catalog order. */
+  officialModels: Array<string>
+}
+
+export interface LoadBaseCatalogOptions {
+  customFiles: Array<string>
+  /** Catalog entries served by another provider; never source-suffixed. */
+  extensionModels?: Array<CodexCatalogEntry>
+  upstreamCacheFile: string
+}
+
+/**
+ * Loads the raw sources only. Custom definitions win over upstream ones, and
+ * an entry for a slug the official catalog already describes stays official
+ * so it keeps its suffix eligibility.
+ */
+export async function loadBaseCatalog(
+  options: LoadBaseCatalogOptions,
+): Promise<BaseCatalog> {
+  const upstream = await readCatalogPayload(options.upstreamCacheFile)
+  const entries = new Map<string, CodexCatalogEntry>()
+  for (const model of upstream?.models ?? []) {
+    entries.set(model.slug, model)
+  }
+  const officialModels = [...entries.keys()]
+
+  const customModels: Array<string> = []
+  for (const file of options.customFiles) {
+    const custom = await readCatalogPayload(file)
+    if (custom === undefined) continue
+    for (const model of custom.models) {
+      if (!entries.has(model.slug)) customModels.push(model.slug)
+      entries.set(model.slug, model)
+    }
+  }
+
+  const extensionModels = (options.extensionModels ?? []).map((model) => {
+    const slug = String(model.slug)
+    entries.set(slug, model)
+    return slug
+  })
+
+  const metadata = Object.fromEntries(
+    Object.entries(upstream ?? {}).filter(([key]) => key !== "models"),
+  )
+
+  return { customModels, entries, extensionModels, metadata, officialModels }
+}
+
+export interface RefreshUpstreamCatalogOptions {
+  cacheFile: string
+  url?: string
+}
+
+/**
+ * Refreshes the raw official catalog and caches it. A failure keeps the cached
+ * copy; an empty result means neither source was available, which the caller
+ * has to treat as a missing base rather than an empty model list.
+ */
+export async function refreshUpstreamCatalog(
+  options: RefreshUpstreamCatalogOptions,
+): Promise<void> {
+  try {
+    const response = await fetch(options.url ?? CATALOG_URL, {
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!response.ok)
+      throw new HTTPError("Failed to fetch the Codex model catalog", response)
+    const payload = catalogSchema.parse(await response.json())
+    await fs.mkdir(path.dirname(options.cacheFile), { recursive: true })
+    await fs.writeFile(
+      options.cacheFile,
+      `${JSON.stringify(payload, null, 2)}\n`,
+    )
+  } catch (error) {
+    consola.warn(
+      "Could not refresh upstream Codex catalog; using local sources",
+      error,
+    )
+  }
+}
+
+/**
+ * Builds the catalog Codex reads. While source suffixes are published each
+ * eligible base model appears once per provider that serves it, and entries
+ * owned by another provider keep their own id.
+ */
+export function buildCatalogEntries(options: {
+  base: BaseCatalog
+  published: PublishedModels
+}): Array<CodexCatalogEntry> {
+  const { base, published } = options
+  if (!published.suffixMode) return [...base.entries.values()]
+
+  const variantsByBase = new Map<string, Array<string>>()
+  for (const entry of published.entries.values()) {
+    const variants = variantsByBase.get(entry.baseModel) ?? []
+    variants.push(entry.publicModel)
+    variantsByBase.set(entry.baseModel, variants)
+  }
+
+  const extensions = new Set(base.extensionModels)
+  const entries: Array<CodexCatalogEntry> = []
+  for (const [slug, entry] of base.entries) {
+    const variants = variantsByBase.get(slug)
+    if (variants === undefined) {
+      // A model no enabled provider serves is not advertised; extension
+      // entries stay because another provider owns their id.
+      if (extensions.has(slug)) entries.push(entry)
+      continue
+    }
+    for (const variant of variants) {
+      const source = parseSourceModel(variant)?.source
+      const mapped: CodexCatalogEntry = {
+        ...entry,
+        slug: variant,
+        display_name: published.entries.get(variant)?.displayName ?? variant,
+      }
+      remapSameSourceReferences(mapped, source, published)
+      entries.push(mapped)
+    }
+  }
+  return entries
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+/**
+ * Structured references such as `upgrade.model` must keep pointing at a model
+ * the same source actually publishes. An unmappable reference is removed
+ * rather than left dangling; free-form text is never rewritten.
+ */
+function remapSameSourceReferences(
+  entry: CodexCatalogEntry,
+  source: ModelSource | undefined,
+  published: PublishedModels,
+): void {
+  if (source === undefined) return
+
+  const remap = (value: unknown): string | undefined => {
+    if (typeof value !== "string" || value.length === 0) return undefined
+    const sameSource = formatSourceModel(value, source)
+    if (published.entries.has(sameSource)) return sameSource
+    return published.entries.has(value) ? value : undefined
+  }
+
+  if (typeof entry.auto_review_model_override === "string") {
+    const remapped = remap(entry.auto_review_model_override)
+    if (remapped === undefined) delete entry.auto_review_model_override
+    else entry.auto_review_model_override = remapped
+  }
+
+  const upgrade = entry.upgrade
+  if (!isRecord(upgrade) || typeof upgrade.model !== "string") return
+
+  const remapped = remap(upgrade.model)
+  if (remapped === undefined) delete entry.upgrade
+  else entry.upgrade = { ...upgrade, model: remapped }
+}
+
+export interface WritePublishedCatalogOptions {
+  base: BaseCatalog
+  outputFile: string
+  published: PublishedModels
+}
+
+/** Replaces the generated catalog atomically, after the sources were read. */
+export async function writePublishedCatalog(
+  options: WritePublishedCatalogOptions,
+): Promise<void> {
+  const models = buildCatalogEntries({
+    base: options.base,
+    published: options.published,
+  })
+  await writeCatalogFile(options.outputFile, {
+    ...options.base.metadata,
+    models,
+  })
+  consola.info(
+    `Updated Codex model catalog: ${options.outputFile} (${models.length} models)`,
+  )
+}
+
+async function writeCatalogFile(
+  outputFile: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const temporary = `${outputFile}.${process.pid}.tmp`
+  await fs.mkdir(path.dirname(outputFile), { recursive: true })
+  await fs.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`)
+  await fs.rename(temporary, outputFile)
 }
 
 export async function refreshCodexModels(

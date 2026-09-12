@@ -1,6 +1,7 @@
 import type { CodexAuthManager } from "~/services/codex/auth-manager"
 import type { ModelsResponse } from "~/services/copilot/get-models"
 
+import type { PublishedModels } from "./model-sources"
 import type { RuntimeConfig } from "./runtime-config"
 
 export interface State {
@@ -13,6 +14,8 @@ export interface State {
   models?: ModelsResponse
   vsCodeVersion?: string
   runtimeConfig?: RuntimeConfig
+  /** Resolved public model ids, including source suffixes while Codex is on. */
+  publishedModels?: PublishedModels
 
   manualApprove: boolean
   rateLimitWait: boolean

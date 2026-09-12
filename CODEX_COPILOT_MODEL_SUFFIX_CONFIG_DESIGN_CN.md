@@ -1,6 +1,6 @@
 # Codex 转发开关与模型来源后缀设计
 
-日期：2026-09-12。状态：待实现；本文只定义配置与实现、测试方案。
+日期：2026-09-12。状态：**已实现**（2026-09-12）；实现、验证与偏差记录见 [CODEX_COPILOT_MODEL_SUFFIX_IMPLEMENTATION_REPORT_CN.md](CODEX_COPILOT_MODEL_SUFFIX_IMPLEMENTATION_REPORT_CN.md)。本文保留原始设计，不在实现后回改条款。
 
 ## 1. 目标与行为
 

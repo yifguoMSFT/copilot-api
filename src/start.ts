@@ -7,9 +7,21 @@ import path from "node:path"
 import { serve } from "srvx"
 import invariant from "tiny-invariant"
 
+import { deepSeekCodexModels } from "~/providers/deepseek/models"
+
 import { createCodexCredentialStore } from "./lib/codex-credentials"
-import { findCodexCatalogGaps, refreshCodexModels } from "./lib/codex-models"
+import {
+  loadBaseCatalog,
+  type BaseCatalog,
+  refreshUpstreamCatalog,
+  writePublishedCatalog,
+} from "./lib/codex-models"
 import { assertModelRoutingConflicts } from "./lib/model-routing"
+import {
+  buildPublishedModels,
+  findUnconfiguredCodexModels,
+  type PublishedModels,
+} from "./lib/model-sources"
 import { ensureCodexAuthDir, ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { loadRuntimeConfig, type RuntimeConfig } from "./lib/runtime-config"
@@ -106,21 +118,93 @@ async function reportCodexReadiness(codex: CodexProviderConfig): Promise<void> {
   }
 }
 
-/**
- * Codex only lists models its `model_catalog_json` describes, so a passthrough
- * model missing from the generated catalog stays routable but cannot be picked
- * in the App. Point at the fix at startup instead of leaving it undiscovered.
- */
-async function reportCodexCatalogCoverage(
-  codex: CodexProviderConfig,
-): Promise<void> {
-  const catalogFile = path.join(process.cwd(), "codex-models.json")
-  const missing = await findCodexCatalogGaps(codex.models, catalogFile)
-  if (missing.length === 0) return
+interface CodexCatalogPaths {
+  cacheFile: string
+  catalogFile: string
+  customFiles: Array<string>
+}
 
-  consola.warn(
-    `Codex models missing from ${catalogFile}: ${missing.join(", ")}. Add matching entries to codex-models-custom.json and restart Codex so its model picker can list them.`,
+const codexCatalogPaths = (cwd: string): CodexCatalogPaths => ({
+  cacheFile: path.join(cwd, "codex-models-upstream.json"),
+  catalogFile: path.join(cwd, "codex-models.json"),
+  customFiles: [path.join(cwd, "codex-models-custom.json")],
+})
+
+/**
+ * Loads the raw model definitions and fails early when the enabled Codex
+ * provider has nothing to publish. A missing upstream catalog is fatal there,
+ * because silently serving an empty picker would look like a working setup.
+ */
+async function loadCodexBaseCatalog(
+  config: RuntimeConfig,
+  paths: CodexCatalogPaths,
+): Promise<BaseCatalog> {
+  await refreshUpstreamCatalog({ cacheFile: paths.cacheFile })
+  const base = await loadBaseCatalog({
+    customFiles: paths.customFiles,
+    extensionModels:
+      config.providers.deepseek.enabled ? deepSeekExtensionModels(config) : [],
+    upstreamCacheFile: paths.cacheFile,
+  })
+
+  if (config.providers.codex.enabled) {
+    if (
+      config.providers.codex.models.length === 0
+      && base.officialModels.length === 0
+    ) {
+      throw new Error(
+        `No official Codex model catalog is available (cache: ${paths.cacheFile}); connect to the network or restore the cache before enabling the Codex provider`,
+      )
+    }
+    const missing = findUnconfiguredCodexModels(config, [
+      ...base.officialModels,
+      ...base.customModels,
+    ])
+    if (missing.length > 0) {
+      throw new Error(
+        `Codex models have no catalog definition: ${missing.join(", ")}. Add them to codex-models-custom.json or adjust providers.codex.models`,
+      )
+    }
+  }
+
+  return base
+}
+
+const deepSeekExtensionModels = (
+  config: RuntimeConfig,
+): Array<Record<string, unknown>> =>
+  deepSeekCodexModels.filter((model) =>
+    config.providers.deepseek.models.includes(String(model.slug)),
   )
+
+/**
+ * Publishes the public model ids once the Copilot catalogue is known, writes
+ * the catalog Codex reads, and keeps the mapping every request resolves
+ * against in memory.
+ */
+async function publishModels(
+  config: RuntimeConfig,
+  base: BaseCatalog,
+  catalogFile: string,
+): Promise<PublishedModels> {
+  const published = buildPublishedModels({
+    catalog: base.entries,
+    config,
+    copilotModels:
+      config.providers.copilot.enabled ?
+        (state.models?.data.map((model) => model.id) ?? [])
+      : [],
+    customModels: base.customModels,
+    officialModels: base.officialModels,
+  })
+  state.publishedModels = published
+  await writePublishedCatalog({ base, outputFile: catalogFile, published })
+  consola.info(
+    published.suffixMode ?
+      `Published ${published.entries.size} source-suffixed model ids`
+    : "Source suffixes disabled; publishing a single unsuffixed model list",
+  )
+  return published
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -153,7 +237,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.runtimeConfig = runtimeConfig
   // Static conflicts fail before any directory or network work happens.
   assertModelRoutingConflicts(runtimeConfig)
-  await refreshCodexModels(process.cwd())
+  const catalogPaths = codexCatalogPaths(process.cwd())
+  const baseCatalog = await loadCodexBaseCatalog(runtimeConfig, catalogPaths)
   if (
     runtimeConfig.providers.deepseek.enabled
     && !runtimeConfig.providers.deepseek.apiKey.trim()
@@ -167,15 +252,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   })
 
   if (runtimeConfig.providers.codex.enabled) {
-    // The Copilot catalogue is only available after bootstrap, so the
-    // cross-provider collision check is completed here.
-    assertModelRoutingConflicts(
-      runtimeConfig,
-      state.models?.data.map((model) => model.id) ?? [],
-    )
-    await reportCodexCatalogCoverage(runtimeConfig.providers.codex)
     await reportCodexReadiness(runtimeConfig.providers.codex)
   }
+
+  await publishModels(runtimeConfig, baseCatalog, catalogPaths.catalogFile)
 
   consola.info(
     `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,

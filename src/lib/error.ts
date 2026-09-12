@@ -12,6 +12,23 @@ export class HTTPError extends Error {
   }
 }
 
+/**
+ * An error the gateway itself raised, carrying the HTTP status the client
+ * should see plus a stable machine-readable code. Used by model routing so a
+ * rejected model selection never reaches an upstream.
+ */
+export class HttpStatusError extends Error {
+  readonly code: string | undefined
+  readonly status: ContentfulStatusCode
+
+  constructor(status: ContentfulStatusCode, message: string, code?: string) {
+    super(message)
+    this.name = "HttpStatusError"
+    this.status = status
+    this.code = code
+  }
+}
+
 export async function forwardError(c: Context, error: unknown) {
   consola.error("Error occurred:", error)
 
@@ -35,13 +52,17 @@ export async function forwardError(c: Context, error: unknown) {
     )
   }
 
+  const status = error instanceof HttpStatusError ? error.status : 500
+  const code = error instanceof HttpStatusError ? error.code : undefined
+
   return c.json(
     {
       error: {
         message: (error as Error).message,
         type: "error",
+        ...(code === undefined ? {} : { code }),
       },
     },
-    500,
+    status,
   )
 }

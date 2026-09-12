@@ -162,16 +162,13 @@ function mergeLayer(
 }
 
 /**
- * Rejects a Codex provider that could not serve requests safely: no routable
- * model, no gateway key, an upstream that is not the verified origin, or a
- * profile name that could escape the credential directory.
+ * Rejects a Codex provider that could not serve requests safely: no gateway
+ * key, an upstream that is not the verified origin, or a profile name that
+ * could escape the credential directory. An omitted model list is valid and
+ * means "every official catalog model"; the catalog itself is loaded later.
  */
 function assertCodexProvider(codex: RuntimeConfig["providers"]["codex"]): void {
   if (!codex.enabled) return
-
-  if (codex.models.length === 0) {
-    throw new Error("Codex provider requires at least one configured model")
-  }
 
   if (codex.gatewayApiKey.trim().length === 0) {
     throw new Error(

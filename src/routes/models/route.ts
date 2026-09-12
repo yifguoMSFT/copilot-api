@@ -1,7 +1,6 @@
 import { Hono } from "hono"
-import path from "node:path"
 
-import { buildCodexModelEntries, loadCodexCatalog } from "~/lib/codex-models"
+import { codexModelCapabilities } from "~/lib/codex-models"
 import { forwardError } from "~/lib/error"
 import { modelAliasEntries } from "~/lib/model-aliases"
 import { state } from "~/lib/state"
@@ -18,6 +17,12 @@ modelRoutes.get("/", async (c) => {
       // This should be handled by startup logic, but as a fallback.
       await cacheModels()
     }
+
+    const suffixedBaseIds = new Set(
+      [...(state.publishedModels?.entries.values() ?? [])].map(
+        (entry) => entry.baseModel,
+      ),
+    )
 
     const copilotModels =
       state.models?.data.flatMap((model) => {
@@ -38,7 +43,9 @@ modelRoutes.get("/", async (c) => {
             display_name: alias,
           }))
 
-        return [modelData, ...aliases]
+        // A model both providers serve is reachable only through its source
+        // suffixed ids, so the bare entry is not republished here.
+        return suffixedBaseIds.has(model.id) ? aliases : [modelData, ...aliases]
       }) ?? []
     const deepSeekModels =
       state.runtimeConfig?.providers.deepseek.enabled === true ?
@@ -52,19 +59,25 @@ modelRoutes.get("/", async (c) => {
           display_name: id,
         }))
       : []
-    // Only an enabled Codex provider is a route the gateway can serve, so a
-    // disabled configuration publishes no Codex model at all.
-    const codexModels =
-      state.runtimeConfig?.providers.codex.enabled === true ?
-        buildCodexModelEntries(
-          state.runtimeConfig.providers.codex.models,
-          await loadCodexCatalog(path.join(process.cwd(), "codex-models.json")),
-        )
-      : []
+    // Source-suffixed ids are the only public ids for a model that both
+    // providers can serve; while suffixes are off this list stays empty and the
+    // bare Copilot entries above are the published set.
+    const sourceModels = [
+      ...(state.publishedModels?.entries.values() ?? []),
+    ].map((entry) => ({
+      ...codexModelCapabilities(entry.capabilities),
+      id: entry.publicModel,
+      object: "model",
+      type: "model",
+      created: 0,
+      created_at: new Date(0).toISOString(),
+      owned_by: entry.provider,
+      display_name: entry.displayName ?? entry.publicModel,
+    }))
 
     return c.json({
       object: "list",
-      data: [...copilotModels, ...deepSeekModels, ...codexModels],
+      data: [...copilotModels, ...deepSeekModels, ...sourceModels],
       has_more: false,
     })
   } catch (error) {
