@@ -1,3 +1,4 @@
+import consola from "consola"
 import { createHash } from "node:crypto"
 
 import {
@@ -193,6 +194,10 @@ async function refreshCredential(
   }
 
   if (!force && context.isUsable(base, context.now())) return base
+
+  consola.info(
+    `Codex auth: refreshing the stored credentials for profile "${profile}"`,
+  )
 
   let tokens: CodexTokenResponse
   try {

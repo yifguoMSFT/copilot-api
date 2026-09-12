@@ -15,13 +15,16 @@ import { buildCodexRequestHeaders } from "../src/services/codex/forward-response
 
 const originalFetch = globalThis.fetch
 const originalInfo = consola.info.bind(consola)
+const originalWarn = consola.warn.bind(consola)
 const fetchMock = mock((_input: string | URL | Request, _init?: RequestInit) =>
   Promise.resolve(Response.json({ object: "response" })),
 )
 const infoMock = mock(() => undefined)
+const warnMock = mock(() => undefined)
 
 globalThis.fetch = fetchMock as unknown as typeof fetch
 consola.info = infoMock as unknown as typeof consola.info
+consola.warn = warnMock as unknown as typeof consola.warn
 
 const GATEWAY_KEY = "gateway-secret"
 const CODEX_MODEL = "codex-test-model(codex)"
@@ -56,6 +59,8 @@ const codexConfig = (
 
 beforeEach(() => {
   fetchMock.mockClear()
+  infoMock.mockClear()
+  warnMock.mockClear()
   fetchMock.mockImplementation(() =>
     Promise.resolve(Response.json({ object: "response" })),
   )
@@ -81,6 +86,7 @@ beforeEach(() => {
 afterAll(() => {
   globalThis.fetch = originalFetch
   consola.info = originalInfo
+  consola.warn = originalWarn
   state.codexAuthManager = undefined
   state.publishedModels = undefined
 })
@@ -334,9 +340,63 @@ describe("Codex passthrough authentication failures", () => {
     expect(payload.error.code).toBe("codex_auth_unavailable")
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  test("logs the approval response when the Codex login is missing", async () => {
+    state.codexAuthManager = authManagerWith(() =>
+      Promise.reject(
+        new CodexAuthRequiredError("No Codex credentials are stored"),
+      ),
+    )
+
+    const response = await post(
+      JSON.stringify({ model: "codex-auto-review", input: [] }),
+    )
+    await response.text()
+
+    expect(response.status).toBe(503)
+    expect(infoMock).toHaveBeenCalledWith("Request sent to codex-auto-review")
+    expect(infoMock).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^Codex forward: profile=\S+ baseUrl=\S+ bodyBytes=\d+$/,
+      ),
+    )
+    expect(warnMock).toHaveBeenCalledWith(
+      expect.stringContaining("Codex forward: authentication failed"),
+      "No Codex credentials are stored",
+    )
+    expect(infoMock).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^Response received from codex-auto-review: 503 in \d+ms$/,
+      ),
+    )
+    expect(infoMock).toHaveBeenCalledWith(
+      "codex-auto-review output:",
+      expect.stringContaining('"code":"codex_login_required"'),
+    )
+  })
 })
 
 describe("Codex passthrough upstream responses", () => {
+  test("logs every step of the Codex forward", async () => {
+    const response = await post(JSON.stringify({ model: CODEX_MODEL }))
+    await response.text()
+
+    expect(response.status).toBe(200)
+    expect(infoMock).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^Codex forward: profile=\S+ baseUrl=\S+ bodyBytes=\d+$/,
+      ),
+    )
+    expect(infoMock).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^Codex forward: credentials ready account=\S+ revision=\d+ expiresAt=\S+$/,
+      ),
+    )
+    expect(infoMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^Codex forward: upstream responded 200 in \d+ms$/),
+    )
+  })
+
   test.each([401, 429, 500])(
     "returns the upstream %s response unchanged with a single call",
     async (status) => {

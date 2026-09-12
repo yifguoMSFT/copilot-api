@@ -84,8 +84,9 @@ export async function handleResponse(c: Context): Promise<Response> {
       codexConfig,
       signal: upstreamSignal,
     })
-    if ("error" in forwarded) return forwarded.error
-    upstream = forwarded.upstream
+    // A login failure is answered locally, but it is still a response for the
+    // model label and content logs, exactly like the Copilot and DeepSeek paths.
+    upstream = "error" in forwarded ? forwarded.error : forwarded.upstream
   } else if (provider === "deepseek") {
     const deepSeekConfig = state.runtimeConfig?.providers.deepseek
     if (deepSeekConfig === undefined) {

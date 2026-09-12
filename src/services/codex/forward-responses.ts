@@ -46,8 +46,26 @@ export async function createCodexResponses(
   config: CodexProviderConfig,
   options: CodexForwardOptions,
 ): Promise<Response> {
+  const bodyBytes = getBodySize(body)
+  consola.info(
+    `Codex forward: profile=${config.authProfile} baseUrl=${config.baseUrl} bodyBytes=${bodyBytes ?? "unknown"}`,
+  )
+
   const authManager = options.authManager ?? (await getCodexAuthManager())
-  const snapshot = await authManager.getSnapshot(config.authProfile)
+  let snapshot: CodexAuthSnapshot
+  try {
+    snapshot = await authManager.getSnapshot(config.authProfile)
+  } catch (error) {
+    consola.warn(
+      `Codex forward: authentication failed for profile "${config.authProfile}":`,
+      error instanceof Error ? error.message : String(error),
+    )
+    throw error
+  }
+  consola.info(
+    `Codex forward: credentials ready account=${snapshot.accountId ?? "none"} revision=${snapshot.revision} expiresAt=${new Date(snapshot.expiresAt).toISOString()}`,
+  )
+
   const fetchImpl = options.fetchImpl ?? fetch
   const url = codexResponsesUrl(config.baseUrl)
   const headers = buildCodexRequestHeaders(options.headers, snapshot)
@@ -55,7 +73,7 @@ export async function createCodexResponses(
 
   consola.debug("Sending Codex Responses request", {
     accountIdPresent: snapshot.accountId !== undefined,
-    bodyBytes: getBodySize(body),
+    bodyBytes,
     profile: config.authProfile,
     signalAborted: options.signal?.aborted ?? false,
     url,
@@ -70,6 +88,9 @@ export async function createCodexResponses(
       signal: options.signal,
     })
 
+    consola.info(
+      `Codex forward: upstream responded ${response.status} in ${Date.now() - startedAt}ms`,
+    )
     consola.debug("Codex Responses request completed", {
       contentType: response.headers.get("content-type"),
       elapsedMs: Date.now() - startedAt,
@@ -79,6 +100,10 @@ export async function createCodexResponses(
 
     return response
   } catch (error) {
+    consola.warn(
+      `Codex forward: request to ${url} failed after ${Date.now() - startedAt}ms:`,
+      error instanceof Error ? error.message : String(error),
+    )
     consola.debug("Codex Responses request failed", {
       elapsedMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
