@@ -1,0 +1,300 @@
+{
+  "created_at": "2026-09-12T02:27:38Z",
+  "kind": "kanban-blueprint",
+  "tasks": [
+    {
+      "created_at": "2026-09-12T02:27:53Z",
+      "created_by": "user",
+      "id": "baseline_commit：保存_codex_透传计划基线",
+      "parents": [],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "baseline",
+        "git"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL 执行。仓库范围为 I:/Cache/workshop/copilot-api；本任务可提交内容仅限该计划、[[CLIProxyAPI_CODEX_PROXY_ANALYSIS_CN.md]] 与 [[codex-passthrough-login.kanban.json]]。记录当前分支、HEAD、staged/unstaged/untracked 清单，保留其他既有 Copilot/DeepSeek 工作区修改、reference 仓库及配置凭据，不将其纳入提交。审查暂存区，禁止把既有无关 staged 变更夹入提交。不得 push、amend、切换分支或丢弃修改。后续任务不自动中间提交，统一由最终提交任务收尾。",
+      "title": "Baseline commit：保存 Codex 透传计划基线",
+      "updated_at": "2026-09-12T02:27:53Z",
+      "verification": "执行并记录 git status --short、git diff --stat、git diff --cached --stat 及范围内 untracked 检查，排除秘密、忽略项、生成缓存和无关文件。若存在可提交内容，实际提交并记录 before/after HEAD、git log -1、git show --stat HEAD，确认 HEAD 前进；若无可提交内容，记录上述证据、排除文件清单和 `Skipped: no changes to commit`，不创建空提交。Git 错误/失败 hook 不能当作 skip；hash 或 skip 证据写执行上下文，不反复修改报告记录自身 hash。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:28:29Z",
+      "created_by": "user",
+      "id": "p0_核验透传契约与运行时能力",
+      "parents": [
+        "baseline_commit：保存_codex_透传计划基线"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "design",
+        "P0"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。阅读计划第 2、3、6 节及 [[CLIProxyAPI_CODEX_PROXY_ANALYSIS_CN.md]]。创建持续更新的 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_REPORT_CN.md]]，记录基线、版本、源码证据、原始 body/头/错误契约、模型冲突处理和 compact/WS 条件。先做源码、公开文档及本地假上游探测，验证 srvx 的取消/Upgrade、自动解压和 HTTP 流式行为。此阶段不读取真实凭据、不启动真实登录或模型调用；真实 App 流量观察归后续人工验收。网络不可用标出未核验事实，不将第三方实现写成官方承诺；默认先实现 HTTP，保留 WS 决策项。",
+      "title": "P0 核验透传契约与运行时能力",
+      "updated_at": "2026-09-12T02:28:29Z",
+      "verification": "报告包含端点/头清单、单 provider 接入草案、mock fixture、传输层探测证据、明确待实测项。证实 body 不改写、无历史补齐、模型无别名；对无法建立的能力给出后续验证位置，不因真实账号未登录阻塞独立开发。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:28:31Z",
+      "created_by": "user",
+      "id": "p1_配置模型路由与仅_codex_启动",
+      "parents": [
+        "p0_核验透传契约与运行时能力"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "config",
+        "routing",
+        "P1"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。按计划第 2、4 节新增可选 providers.codex schema、环境合并、精确模型路由和禁用/冲突校验；在 Copilot fallback 前分流，禁止 Codex 模型名改写。支持仅 Codex 启动、loopback 监听、网关密钥配置、缺少登录返回 503；保留旧配置和现有 provider 行为。初始化流程先加载配置再生成相应目录。保护既有修改；不编辑真实 config.json 或 App 设置。更新实施报告。",
+      "title": "P1 配置模型路由与仅 Codex 启动",
+      "updated_at": "2026-09-12T02:28:31Z",
+      "verification": "C01/C02/C03 测试通过：旧配置默认 Codex 关闭、仅 Codex 无 GitHub 请求、错误 origin/profile/冲突失败、关闭的 Codex 模型不回退 Copilot、缺网关密钥启动失败。执行相关 runtime-config/model-routing/start 测试，记录结果。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:28:34Z",
+      "created_by": "user",
+      "id": "p2_实现浏览器_oauth_与独立凭据存储",
+      "parents": [
+        "p0_核验透传契约与运行时能力"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "oauth",
+        "credentials",
+        "P2"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。按计划第 5 节实现可注入传输的 OAuth code+PKCE、loopback callback、独立档案存储及 codex-auth login/status/logout 命令基础。处理 state、超时、重复回调、端口冲突、浏览器失败；集中管理待核验 OAuth 常量。凭据原子写入、严格 profile、POSIX 权限及 Windows ACL 处理；不读取 App 登录文件，日志不泄漏身份材料。本任务只用 fake tokens 和临时目录。记录到实施报告。",
+      "title": "P2 实现浏览器 OAuth 与独立凭据存储",
+      "updated_at": "2026-09-12T02:28:34Z",
+      "verification": "A01/A02/A03/L01 通过；模拟成功/拒绝/错误/超时、存储中断、损坏文件和权限失败，验证资源清理与脱敏。真实登录留在后续人工验收，不能将 mock 结果声称为真实账号成功。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:28:36Z",
+      "created_by": "user",
+      "id": "p2_实现并发刷新与登录退出一致性",
+      "parents": [
+        "p2_实现浏览器_oauth_与独立凭据存储"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "auth",
+        "concurrency",
+        "P2"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。实现 auth-manager 的提前刷新、注入时钟、singleflight、refresh token 轮换和一致性 token/account 快照。协调 CLI/服务跨进程档案锁、版本重读、logout tombstone 与在途刷新；网络失败保留有效凭据，invalid_grant 转为需登录。不无限重试轮换后的旧 token，不自动重发推理请求。补全运行中 login/status/logout 行为并更新实施报告。",
+      "title": "P2 实现并发刷新与登录退出一致性",
+      "updated_at": "2026-09-12T02:28:36Z",
+      "verification": "A04/A05/A06 通过：20 并发请求只刷新一次；轮换及省略 refresh token 正确；多进程写入无丢更新；logout 后刷新不能复活凭据，后续请求不能使用旧内存身份；死锁/超时可诊断。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:28:39Z",
+      "created_by": "user",
+      "id": "p3_实现_codex_http_与_sse_原样透传",
+      "parents": [
+        "p1_配置模型路由与仅_codex_启动",
+        "p2_实现并发刷新与登录退出一致性"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "http",
+        "sse",
+        "P3"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。按计划第 3 节接入独立 Codex 分支，绕过别名/正文日志/reasoning 清理/SSE ID 标准化。只解析 body 副本取 model，传递原始 ArrayBuffer；统一网关鉴权，注入选中 OAuth/account，过滤身份与 hop-by-hop 头，限制 origin，manual redirect。原样交付状态/实体流，处理背压、取消、超时、压缩头一致性及响应前/后错误；不重试推理。根据 contract 定义 compact 路由，未支持能力明确返回错误，不猜模型。更新报告。",
+      "title": "P3 实现 Codex HTTP 与 SSE 原样透传",
+      "updated_at": "2026-09-12T02:28:39Z",
+      "verification": "H01–H05/S01/S02/S04 覆盖并通过。以 Uint8Array 比较原始字节，覆盖 tools、reasoning、previous_response_id、未知字段、stream:false、大整数、UTF-8 跨块、CRLF、错误和 3xx。断言上游请求仅一次、无正文 clone/重写、无凭据越界。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:28:42Z",
+      "created_by": "user",
+      "id": "p3_验证真实_socket_流取消与背压",
+      "parents": [
+        "p3_实现_codex_http_与_sse_原样透传"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "integration",
+        "stream",
+        "P3"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。使用本地假上游与生产服务适配器编写 HTTP 集成测试，覆盖首事件提前到达、慢消费者/长流、上传时取消、响应期间取消、连接失败、超时及压缩。只对本地测试端点注入 fake 身份，不放宽生产 origin 约束。修复测试暴露的传输问题并更新报告。",
+      "title": "P3 验证真实 socket 流取消与背压",
+      "updated_at": "2026-09-12T02:28:42Z",
+      "verification": "S02/S03/S04 与 H05 的真实 socket 测试通过：上游未结束时客户端可收首事件、下游断开能中止上游、缓冲有界、任务与 listener 无泄漏；使用事件同步和合理 deadline，不靠脆弱固定延时。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:28:44Z",
+      "created_by": "user",
+      "id": "p4_接入模型目录并编写使用文档",
+      "parents": [
+        "p1_配置模型路由与仅_codex_启动",
+        "p3_实现_codex_http_与_sse_原样透传"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "models",
+        "docs",
+        "P4"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。完善 /models 与 Codex catalog 的模型/能力信息，明确 App 实际目录接入方式与未经验证项；禁用模型不作为可用路由发布。编写 [[CODEX_PASSTHROUGH_LOGIN_USAGE_CN.md]]，给出单 provider 配置示例、网关密钥来源、登录/status/logout、启停、HTTP/WS/compact 边界与故障诊断。核验配置字段才写成可执行示例，不覆盖现有用户 catalog 定制及真实配置。持续更新实施报告。",
+      "title": "P4 接入模型目录并编写使用文档",
+      "updated_at": "2026-09-12T02:28:44Z",
+      "verification": "M01/M02 对已实现 compact 的测试通过；离线刷新不损坏目录；示例无秘密，区分普通 /models 与 App catalog，build 后 codex-auth --help 正常。未实现功能明确标注。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:29:22Z",
+      "created_by": "user",
+      "id": "准备真实账号与_app_验收范围",
+      "parents": [
+        "p3_验证真实_socket_流取消与背压",
+        "p4_接入模型目录并编写使用文档"
+      ],
+      "priority": null,
+      "review_required": true,
+      "status": "todo",
+      "tags": [
+        "review",
+        "live-validation"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。准备可审阅验收材料，依据计划第 9 节列出将使用的账号、模型 A/B、最少推理请求/额度范围、临时 provider 配置、凭据存储位置、停止条件及设置恢复步骤。只使用测试目录和脱敏示例准备，不先读取真实 token。检查会话是否已经明确授权相同真实登录/调用；已有授权不得重复请求。若仍缺账号/额度授权或浏览器交互，由操作者确认后再进入后续任务。此门只针对真实凭据与外部推理消耗，非普通代码/本地测试。",
+      "title": "准备真实账号与 App 验收范围",
+      "updated_at": "2026-09-12T02:29:22Z",
+      "verification": "审阅材料指明决策、影响范围、停止条件、回退和证据；记录已有授权依据或操作者对本次真实登录和有限模型调用的确认。没有授权不能以 mock 代替本任务决策，也不执行后续真实操作。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:29:27Z",
+      "created_by": "user",
+      "id": "p4_验证真实登录并确定_app_传输方式",
+      "parents": [
+        "准备真实账号与_app_验收范围"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "oauth",
+        "app",
+        "live-validation"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。在获准范围内由操作者完成浏览器登录，验证 status、代理重启、到期刷新/重新登录、仅 Codex 无 GitHub 依赖。使用隔离或可恢复的单 provider 配置观察当前 App 实际 HTTP/SSE/WS 和 compact 请求；先做最小 A→B→A 探测，记录是否完整历史、工具/reasoning 兼容和失败原因。只记录脱敏结构，不抓取或持久化真实正文/凭据。把 HTTP 是否可明确启用以及是否必须 WS 的结论写入实施报告；调用限制受前置确认约束。",
+      "title": "P4 验证真实登录并确定 App 传输方式",
+      "updated_at": "2026-09-12T02:29:27Z",
+      "verification": "记录 App/Bun/OS 版本、真实登录/刷新结果、实际协议和 compact 情况、模型菜单来源、model→endpoint 及历史结构。HTTP 可用需有证据；WS 必需须给出具体触发行为。真实 OAuth/基础调用无法验证时保持未完成并说明阻塞，不声称全功能通过。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:29:30Z",
+      "created_by": "user",
+      "id": "p5_按实测实现_websocket_与_compact_所需能力",
+      "parents": [
+        "p4_验证真实登录并确定_app_传输方式"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "websocket",
+        "conditional",
+        "P5"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。根据前置实测决定：若 HTTP/SSE 已满足目标且 compact 已覆盖，记录 `Skipped: HTTP/SSE satisfies verified client requirements` 和证据，无需新增 WS。若客户端必须 WS，实现生产运行时 Upgrade 与双向 relay、消息 payload 保真、握手鉴权、model 路由、背压和关闭。仅自包含且旧生成结束的请求可跨 endpoint 建连接；依赖旧 previous_response_id 的请求明确失败，不补历史或 WS↔SSE 转换。补齐实际必需 compact；在本地 mock 验证并更新文档和报告。",
+      "title": "P5 按实测实现 WebSocket 与 compact 所需能力",
+      "updated_at": "2026-09-12T02:29:30Z",
+      "verification": "需要 WS 时 W01 全部通过，compact M02 通过，生产入口实际具备 Upgrade 接入；无需 WS 时记录 HTTP 设置生效和实际传输证据。不得以未探测到或实现困难为由 skip；若严格透传无法满足客户端，明确限制并保持目标未完成，不能暗加转换器。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:29:33Z",
+      "created_by": "user",
+      "id": "p4_完成同任务切换与工具端到端验收",
+      "parents": [
+        "p5_按实测实现_websocket_与_compact_所需能力"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "e2e",
+        "app",
+        "validation"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。按计划第 9 节及已获准范围完成最终 App 验收；传输有改动则重跑。固定一个 provider，在同任务执行 A→B→A 与随机标记回忆、工具调用/结果匹配、reasoning/compact 后续对话、取消和登录退出。分别记录路由成功与上下文成功，敏感项脱敏。更新实施报告与使用文档，恢复临时 App 设置。真实上游拒绝历史时保留原始行为，写明原因；只有使用者明确接受范围收窄后才能按新目标验收。",
+      "title": "P4 完成同任务切换与工具端到端验收",
+      "updated_at": "2026-09-12T02:29:33Z",
+      "verification": "真实 App 单 provider 模型切换、历史、工具和实际传输有完整证据；刷新/取消/退出结果明确。每项为通过/失败/经确认不适用，禁止把 mock 或未执行写成通过；任何范围收窄有明确确认。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:29:36Z",
+      "created_by": "user",
+      "id": "p6_完整回归审查与交付报告",
+      "parents": [
+        "p4_完成同任务切换与工具端到端验收"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "tests",
+        "review",
+        "report",
+        "P6"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。复核全部实现契约：原始字节、认证隔离、禁用/冲突路由、重试边界、SSE/WS 取消、模型目录和旧 provider 回归。运行全套检查，修复本功能问题并针对修复补验。完成 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_REPORT_CN.md]] 与 [[CODEX_PASSTHROUGH_LOGIN_USAGE_CN.md]]，列出修改、实际验证、mock/实测区分、限制、回退及基线失败。审查实际 diff，只保留本功能改动，不格式化或覆盖无关用户工作。此任务之后仅允许最终提交和执行上下文记录。",
+      "title": "P6 完整回归审查与交付报告",
+      "updated_at": "2026-09-12T02:29:36Z",
+      "verification": "bun test、bun run typecheck、bun run lint、bun run build 结果记录；构建产物命令帮助及仅 Codex 启动验证完成。已有失败与新增失败明确区分，必需新增测试通过；计划第 10 节检查单逐项有证据；文档链接和示例有效、无秘密。",
+      "workspace_hint": "."
+    },
+    {
+      "created_at": "2026-09-12T02:29:38Z",
+      "created_by": "user",
+      "id": "final_commit：提交_codex_透传登录与测试交付",
+      "parents": [
+        "p6_完整回归审查与交付报告"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "git",
+        "delivery"
+      ],
+      "task_markdown": "依据 [[CODEX_PASSTHROUGH_LOGIN_IMPLEMENTATION_TEST_PLAN_CN.md]]，使用 /kanban-runner SKILL。在 I:/Cache/workshop/copilot-api 当前分支提交本看板实施完成的 Codex 透传/登录代码、测试、已审查的示例与说明、实施报告、计划和蓝图。先核对基线记录，按文件/片段审查，排除先前无关 Copilot/DeepSeek 修改、真实 config.json、凭据、reference 嵌套仓库及执行生成缓存；不得夹带既有 staged 内容。若文件混有旧修改，仅纳入本功能差异。不得 push、amend、切换分支、丢弃修改。提交完成后 hash 写执行上下文，不为报告记自身 hash 继续改 tracked 文件或循环提交执行 bookkeeping。",
+      "title": "Final commit：提交 Codex 透传登录与测试交付",
+      "updated_at": "2026-09-12T02:29:38Z",
+      "verification": "必须记录 git status --short、git diff --stat、git diff --cached --stat 和范围内 untracked 检查。若有 eligible 内容，在所有必需检查通过后实际提交，记录 before/after HEAD、git log -1、git show --stat HEAD 并确认 HEAD 前进；若无 eligible 内容，记录检查与排除文件证据及 `Skipped: no changes to commit`，不做空提交。Git 错误或失败 hook 不能视为 skip。最终证明提交只含授权范围内容、无秘密，所有其他任务在此前完成。",
+      "workspace_hint": "."
+    }
+  ],
+  "updated_at": "2026-09-12T02:29:38Z",
+  "version": 1
+}
