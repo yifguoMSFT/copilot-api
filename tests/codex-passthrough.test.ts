@@ -50,7 +50,6 @@ const codexConfig = (
 ) => ({
   ...defaultProviderConfig().providers.codex,
   enabled: true,
-  gatewayApiKey: GATEWAY_KEY,
   models: ["codex-test-model"],
   ...overrides,
 })
@@ -91,7 +90,6 @@ const post = (body: string, headers: Record<string, string> = {}) =>
     new Request("http://localhost/v1/responses", {
       body,
       headers: {
-        authorization: `Bearer ${GATEWAY_KEY}`,
         "content-type": "application/json",
         ...headers,
       },
@@ -103,6 +101,30 @@ const forwarded = (index = 0): [string, RequestInit] =>
   fetchMock.mock.calls[index] as [string, RequestInit]
 
 describe("Codex passthrough forwarding", () => {
+  test("sends approval to Codex unchanged and strips encrypted-only reasoning", async () => {
+    const response = await post(
+      JSON.stringify({
+        model: "codex-auto-review",
+        input: [
+          {
+            type: "reasoning",
+            summary: [],
+            encrypted_content: "foreign-cipher",
+          },
+        ],
+      }),
+    )
+    expect(response.status).toBe(200)
+    const [url, init] = forwarded()
+    expect(url).toBe("https://chatgpt.com/backend-api/codex/responses")
+    expect(await new Response(init.body).json()).toEqual({
+      model: "codex-auto-review",
+      input: [{ type: "reasoning", summary: [] }],
+    })
+    expect(new Headers(init.headers).get("authorization")).toBe(
+      "Bearer codex-access-token",
+    )
+  })
   test("strips the source suffix and posts the rest of the payload", async () => {
     const body = JSON.stringify({
       model: CODEX_MODEL,
@@ -211,7 +233,7 @@ describe("Codex passthrough forwarding", () => {
 })
 
 describe("Codex passthrough gateway", () => {
-  test("rejects a request without the gateway key", async () => {
+  test("forwards without a client API key using the logged-in credential", async () => {
     const response = await server.request(
       new Request("http://localhost/v1/responses", {
         body: JSON.stringify({ model: CODEX_MODEL }),
@@ -220,27 +242,25 @@ describe("Codex passthrough gateway", () => {
       }),
     )
 
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({
-      error: {
-        code: "gateway_unauthorized",
-        message: "Missing or invalid gateway API key",
-        type: "error",
-      },
-    })
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(new Headers(forwarded()[1].headers).get("authorization")).toBe(
+      "Bearer codex-access-token",
+    )
   })
 
-  test("rejects a wrong gateway key without calling the upstream", async () => {
+  test("ignores client credentials and injects the stored credential", async () => {
     const response = await post(JSON.stringify({ model: CODEX_MODEL }), {
       authorization: "Bearer wrong-key",
     })
 
-    expect(response.status).toBe(401)
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(response.status).toBe(200)
+    expect(new Headers(forwarded()[1].headers).get("authorization")).toBe(
+      "Bearer codex-access-token",
+    )
   })
 
-  test("accepts the gateway key from x-api-key", async () => {
+  test("accepts and strips a client x-api-key", async () => {
     const response = await server.request(
       new Request("http://localhost/v1/responses", {
         body: JSON.stringify({ model: CODEX_MODEL }),

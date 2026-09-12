@@ -84,22 +84,25 @@ test.each([
   expect(result.input).toBe(input)
 })
 
-test("keeps an encrypted payload when the reasoning content is already empty", () => {
-  const item = {
-    type: "reasoning",
-    id: "reasoning-native",
-    summary: [],
-    encrypted_content: "cipher-native",
-    content: [],
-  }
+test.each([{}, { content: [] }])(
+  "strips encrypted reasoning with missing or empty content: %j",
+  (content) => {
+    const item = {
+      type: "reasoning",
+      id: "reasoning-native",
+      summary: [],
+      encrypted_content: "cipher-native",
+      ...content,
+    }
 
-  const result = stripReasoningContent([item])
+    const result = stripReasoningContent([item])
 
-  expect(result.changed).toBe(false)
-  expect(result.encryptedContent).toBe(0)
-  expect(result.input).toBe(result.input)
-  expect(item.encrypted_content).toBe("cipher-native")
-})
+    expect(result.changed).toBe(true)
+    expect(result.encryptedContent).toBe(1)
+    expect(result.input[0]).not.toHaveProperty("encrypted_content")
+    expect(item.encrypted_content).toBe("cipher-native")
+  },
+)
 
 test("counts zero encrypted payloads when the item has none", () => {
   const result = stripReasoningContent([

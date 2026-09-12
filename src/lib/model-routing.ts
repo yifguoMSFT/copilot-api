@@ -2,6 +2,7 @@ import type { RuntimeConfig } from "./runtime-config"
 
 import { HttpStatusError } from "./error"
 import { resolveModelAlias } from "./model-aliases"
+import { isModelSeparator } from "./model-separators"
 import {
   containsSourceSuffix,
   parseSourceModel,
@@ -22,6 +23,16 @@ export function resolveModelRoute(
   config: RuntimeConfig,
   published?: PublishedModels,
 ): ModelRoute {
+  if (isModelSeparator(model)) {
+    throw new HttpStatusError(
+      400,
+      "Select a model below the separator",
+      "model_separator",
+    )
+  }
+  if (model === "codex-auto-review" && config.providers.codex.enabled) {
+    return { provider: "codex", requestedModel: model, upstreamModel: model }
+  }
   // A published source-suffixed id decides both the upstream and the model the
   // upstream receives; anything else falls through to the legacy paths below.
   const publishedEntry = published?.entries.get(model)

@@ -24,10 +24,9 @@
 |---|---|
 | 运行时 | Bun（本项目脚本与测试使用 Bun） |
 | 账号 | 一个可用的 ChatGPT/Codex 账号，浏览器登录一次 |
-| 网关密钥 | 环境变量 `COPILOT_API_GATEWAY_API_KEY`，由你自己生成 |
 | 配置 | `config.json` 中 `providers.codex`（见第 3 节） |
 
-网关密钥只在环境变量里读取，配置文件没有对应字段，也不会写进任何凭据文件。它只用来保护本地 Codex 路由：Copilot 与 DeepSeek 端点保持原来的可达性，不受影响。启用 Codex 却缺少该密钥时，服务在加载配置阶段直接失败，而不是启动后再静默放行。
+本地网关无需 API 密钥。Codex 上游鉴权由已登录的 credential profile 提供，客户端不需要发送 Authorization 或 x-api-key。
 
 ## 3. 服务端配置
 
@@ -63,7 +62,7 @@
 | `authProfile` | `default` | 凭据档案名，按安全文件名规则校验 |
 | `transport` | `http` | 目前只接受 `http`，其他值校验失败 |
 
-环境变量覆盖：`COPILOT_API_CODEX_ENABLED`、`COPILOT_API_CODEX_BASE_URL`、`COPILOT_API_CODEX_AUTH_PROFILE`，网关密钥使用 `COPILOT_API_GATEWAY_API_KEY`。布尔覆盖只接受 `true` 或 `false`。
+环境变量覆盖：`COPILOT_API_CODEX_ENABLED`、`COPILOT_API_CODEX_BASE_URL`、`COPILOT_API_CODEX_AUTH_PROFILE`。布尔覆盖只接受 `true` 或 `false`。
 
 白名单里只能写基础 ID（如 `gpt-5.6-luna`），不能写带后缀的 ID；重复 ID 或在 `models` 里写 `gpt-5.6-luna(codex)` 都会在启动阶段报错。白名单里出现官方目录和 `codex-models-custom.json` 都没有定义的模型时同样拒绝启动，不会临时合成一个残缺条目。
 
@@ -127,7 +126,6 @@ bun run ./src/main.ts codex-auth logout
 
 ```bash
 # 只启用 Codex 时无需 GitHub/Copilot 登录
-COPILOT_API_GATEWAY_API_KEY="<你的本地网关密钥>" \
   bun run ./src/main.ts start --config config.json
 
 # 换端口
@@ -173,12 +171,11 @@ COPILOT_API_GATEWAY_API_KEY="<你的本地网关密钥>" \
 name = "copilot-api"
 base_url = "http://127.0.0.1:4141/v1"
 wire_api = "responses"
-env_key = "COPILOT_API_GATEWAY_API_KEY"
 ```
 
-`base_url` 指向网关的 `/v1`，`wire_api = "responses"` 表示使用 Responses 协议；`env_key` 让 Codex 从同名环境变量读取网关密钥，取值必须与网关进程看到的 `COPILOT_API_GATEWAY_API_KEY` 一致。
+`base_url` 指向网关的 `/v1`，`wire_api = "responses"` 表示使用 Responses 协议。无需配置 `env_key` 或客户端鉴权命令。
 
-字段来源：`model_providers`、`wire_api`、`env_key` 的写法引自 [Better-Codex-App-Custom-Provider-Support 的 README](I:/Cache/workshop/Better-Codex-App-Custom-Provider-Support/README.md)（自定义 Codex provider 一节）。`env_key` 与 `[model_providers.<id>.auth]` 互斥，不要同时配置；不想把密钥放进环境变量时，可改用该仓库示例中的 `auth` 命令形式。
+Provider 配置只需 name、base_url 和 wire_api；ChatGPT 登录由服务端 codex-auth 管理。
 
 ### 7.2 目录与生效步骤
 
@@ -237,7 +234,6 @@ env_key = "COPILOT_API_GATEWAY_API_KEY"
 
 | 现象 | 含义 | 处理 |
 |---|---|---|
-| 启动失败：`Missing Codex gateway API key` | 启用了 Codex 但没有 `COPILOT_API_GATEWAY_API_KEY` | 设置该环境变量后重启 |
 | 启动失败：`Codex base URL must stay on https://chatgpt.com` | `baseUrl` 指向了非官方 origin | 改回 `https://chatgpt.com/backend-api/codex` |
 | 启动失败：`Codex model must not carry a source suffix` 或 schema 报 `models` 非法 | `providers.codex.models` 里有后缀 ID、重复 ID 或显式空数组 | 只写基础 ID（如 `gpt-5.6-luna`），或整个删掉 `models` |
 | 启动失败：`Codex models have no catalog definition: ...` | 白名单里的模型在官方目录和 `codex-models-custom.json` 里都没有定义 | 补条目或收窄白名单 |
@@ -247,7 +243,6 @@ env_key = "COPILOT_API_GATEWAY_API_KEY"
 | `400 model_suffix_disabled` | 请求了 `(copilot)` 模型但 Codex 未启用，该后缀在当前配置下不发布 | 改选无后缀的裸模型 |
 | `400 model_not_available` | 后缀合法，但该基础模型不在已发布集合里 | 检查 `models` 白名单、Copilot 是否提供该模型，或补 `codex-models-custom.json` |
 | `400 invalid_model` | `model` 缺失、不是字符串、后缀重复（如 `x(codex)(codex)`）或大小写不符 | 用 `/models` 里真实存在的 slug |
-| `401 gateway_unauthorized` | 请求缺少或带错了网关密钥 | 让客户端发送 `Authorization: Bearer <网关密钥>` 或 `x-api-key`，取值与网关一致 |
 | `503 codex_login_required` | 本地没有该档案的凭据，或 refresh token 已被拒绝 | 重新执行 `codex-auth login --profile <档案>` |
 | `503 codex_auth_unavailable` | 刷新因网络或上游 429/5xx 失败 | 稍后重试；凭据仍然保留 |
 | 模型在网关可用但 App 菜单里没有 | App 目录缺条目 | 补 `codex-models-custom.json`，重启网关与 Codex |
@@ -268,5 +263,5 @@ codex debug models                                 # Codex 看到的有效目录
 
 - ChatGPT 凭据只存放在本地凭据文件里，只会发送到 `https://chatgpt.com`；配置层拒绝把凭据指向其他 origin。
 - 客户端请求头里的 `authorization`、`cookie`、`x-api-key`、`chatgpt-account-id` 会被替换或剥离，绝不会转发给上游；`connection` 列出的头与 `proxy-*` 一并剥离。
-- 网关默认只监听 `127.0.0.1`。对外暴露等于把 ChatGPT 凭据的代理入口开放给网络，必须同时保证网关密钥强度与网络边界。
+- 网关默认只监听 `127.0.0.1`。对外暴露等于把 ChatGPT 凭据的代理入口开放给网络，应自行限制网络访问。
 - `codex-auth logout` 只清理本地凭据，不撤销服务端授权；需要撤销请在账号侧操作。

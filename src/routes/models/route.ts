@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { codexModelCapabilities } from "~/lib/codex-models"
 import { forwardError } from "~/lib/error"
 import { modelAliasEntries } from "~/lib/model-aliases"
+import { addModelSeparators } from "~/lib/model-separators"
 import { state } from "~/lib/state"
 import { cacheModels } from "~/lib/utils"
 
@@ -77,7 +78,19 @@ modelRoutes.get("/", async (c) => {
 
     return c.json({
       object: "list",
-      data: [...copilotModels, ...deepSeekModels, ...sourceModels],
+      data: addModelSeparators(
+        [
+          ...sourceModels.filter((model) => model.owned_by === "codex"),
+          ...deepSeekModels,
+          ...sourceModels.filter((model) => model.owned_by === "copilot"),
+          ...copilotModels,
+        ],
+        (model) => {
+          if (model.id.endsWith("(codex)")) return "codex"
+          return model.owned_by === "deepseek" ? "deepseek" : "copilot"
+        },
+        (model, id) => ({ ...model, id, display_name: id }),
+      ),
       has_more: false,
     })
   } catch (error) {

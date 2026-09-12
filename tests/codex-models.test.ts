@@ -20,6 +20,7 @@ import {
   defaultProviderConfig,
   type RuntimeConfig,
 } from "../src/lib/runtime-config"
+import { deepSeekCodexModels } from "../src/providers/deepseek/models"
 
 let directory: string
 let fetchMock: ReturnType<typeof spyOn<typeof globalThis, "fetch">>
@@ -277,7 +278,6 @@ const codexEnabledConfig = (models: Array<string> = []): RuntimeConfig => ({
     codex: {
       ...defaultProviderConfig().providers.codex,
       enabled: true,
-      gatewayApiKey: "gateway-key",
       models,
     },
   },
@@ -321,6 +321,59 @@ test("separates official, custom and extension catalog sources", async () => {
   expect(base.metadata).toEqual({ version: 2 })
 })
 
+test("custom definitions override built-in extensions without losing fields", async () => {
+  const customFile = path.join(directory, "deepseek-custom.json")
+  const custom = {
+    ...deepSeekCodexModels[0],
+    shell_type: "unified_exec",
+    base_instructions: "Custom instructions",
+    custom_metadata: "preserved",
+  }
+  await fs.writeFile(customFile, JSON.stringify({ models: [custom] }))
+  const base = await loadBaseCatalog({
+    customFiles: [customFile],
+    extensionModels: deepSeekCodexModels,
+    upstreamCacheFile: path.join(directory, "missing-upstream.json"),
+  })
+
+  expect(base.entries.get("deepseek-flash")).toEqual(custom)
+  expect(base.extensionModels).toContain("deepseek-flash")
+  expect(base.customModels).not.toContain("deepseek-flash")
+  for (const suffixMode of [false, true]) {
+    const models = buildCatalogEntries({
+      base,
+      published: { entries: new Map(), suffixMode },
+    })
+    expect(models.find((model) => model.slug === "deepseek-flash")).toEqual(
+      custom,
+    )
+  }
+})
+
+test("built-in extensions include required Codex startup metadata", async () => {
+  const base = await loadBaseCatalog({
+    customFiles: [],
+    extensionModels: deepSeekCodexModels,
+    upstreamCacheFile: path.join(directory, "missing-upstream.json"),
+  })
+  const models = buildCatalogEntries({
+    base,
+    published: { entries: new Map(), suffixMode: false },
+  })
+  expect(models).toHaveLength(2)
+  for (const model of models) {
+    expect(typeof model.shell_type).toBe("string")
+    expect(model.visibility).toBe("list")
+    expect(model.supported_in_api).toBe(true)
+    expect(typeof model.priority).toBe("number")
+    expect(typeof model.base_instructions).toBe("string")
+    expect(typeof model.supports_reasoning_summaries).toBe("boolean")
+    expect(typeof model.support_verbosity).toBe("boolean")
+    expect(model.truncation_policy).toEqual({ mode: "tokens", limit: 10_000 })
+    expect(model.experimental_supported_tools).toEqual([])
+  }
+})
+
 test("keeps custom-only slugs separate from the official model set", async () => {
   const customFile = path.join(directory, "extra-custom.json")
   await fs.writeFile(
@@ -351,6 +404,14 @@ test("publishes one suffixed definition per serving provider", async () => {
   const models = buildCatalogEntries({ base, published })
   const slugs = models.map((model) => String(model.slug))
 
+  expect(slugs).toEqual([
+    "gpt-5.6-luna(codex)",
+    "gpt-5.5(codex)",
+    "sol-fast(codex)",
+    "deepseek-flash",
+    "gpt-5.6-luna(copilot)",
+  ])
+
   expect(slugs.toSorted()).toEqual([
     "deepseek-flash",
     "gpt-5.5(codex)",
@@ -371,6 +432,30 @@ test("publishes one suffixed definition per serving provider", async () => {
   )
 })
 
+test("assigns picker priorities in provider order without mutating definitions", () => {
+  const definitions = [
+    { slug: "gpt-5.6-luna(copilot)", priority: 1 },
+    { slug: "deepseek-flash", priority: 1 },
+    { slug: "gpt-5.6-luna(codex)", priority: 8 },
+  ]
+  const models = buildCatalogEntries({
+    base: {
+      entries: new Map(definitions.map((model) => [model.slug, model])),
+      customModels: [],
+      officialModels: [],
+      extensionModels: [],
+      metadata: {},
+    },
+    published: { entries: new Map(), suffixMode: false },
+  })
+  expect(models).toEqual([
+    { slug: "gpt-5.6-luna(codex)", priority: 1 },
+    { slug: "deepseek-flash", priority: 2 },
+    { slug: "gpt-5.6-luna(copilot)", priority: 3 },
+  ])
+  expect(definitions.map((model) => model.priority)).toEqual([1, 1, 8])
+})
+
 test("publishes bare definitions while the Codex provider is disabled", async () => {
   const { base } = await baseCatalogFixture()
   const published = buildPublishedModels({
@@ -383,10 +468,10 @@ test("publishes bare definitions while the Codex provider is disabled", async ()
 
   const models = buildCatalogEntries({ base, published })
   expect(models.map((model) => String(model.slug))).toEqual([
+    "deepseek-flash",
     "gpt-5.6-luna",
     "gpt-5.5",
     "sol-fast",
-    "deepseek-flash",
   ])
 })
 

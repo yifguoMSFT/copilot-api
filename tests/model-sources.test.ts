@@ -33,7 +33,6 @@ const configWith = (
 
 const enabledCodex = (models: Array<string> = []) => ({
   enabled: true,
-  gatewayApiKey: "gateway-key",
   models,
 })
 

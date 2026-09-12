@@ -3,6 +3,7 @@ import consola from "consola"
 
 import type { RuntimeConfig } from "../src/lib/runtime-config"
 
+import { buildPublishedModels } from "../src/lib/model-sources"
 import { defaultProviderConfig } from "../src/lib/runtime-config"
 import { state } from "../src/lib/state"
 import { server } from "../src/server"
@@ -91,12 +92,69 @@ beforeEach(() => {
   state.responsesStableItemIds = true
   state.lastRequestTimestamp = undefined
   state.runtimeConfig = config(true)
+  state.codexAuthManager = undefined
+  state.publishedModels = undefined
 })
 
 afterAll(() => {
   globalThis.fetch = originalFetch
   consola.info = originalInfo
+  state.codexAuthManager = undefined
+  state.publishedModels = undefined
 })
+
+test.each([true, false])(
+  "Codex shares GPT reasoning cleanup (enabled=%s)",
+  async (enabled) => {
+    state.runtimeConfig = config(enabled)
+    state.runtimeConfig.providers.codex.enabled = true
+    state.publishedModels = buildPublishedModels({
+      config: state.runtimeConfig,
+      officialModels: ["gpt-5.6-luna"],
+      copilotModels: [],
+    })
+    const snapshot = {
+      accessToken: "codex-test-token",
+      expiresAt: Date.now() + 60_000,
+      revision: 1,
+    }
+    state.codexAuthManager = {
+      getSnapshot: () => Promise.resolve(snapshot),
+      refreshNow: () => Promise.resolve(snapshot),
+    }
+    const nativeReasoning = { ...reasoningEntry, content: [] }
+    const message = messageEntry(1)
+    const { url, text } = await send(
+      JSON.stringify({
+        model: "gpt-5.6-luna(codex)",
+        input: [reasoningEntry, nativeReasoning, message],
+      }),
+    )
+    const outbound = JSON.parse(text) as {
+      model: string
+      input: Array<Record<string, unknown>>
+    }
+    expect(url).toBe("https://chatgpt.com/backend-api/codex/responses")
+    expect(outbound.model).toBe("gpt-5.6-luna")
+    expect(outbound.input[0].content).toEqual(
+      enabled ? [] : reasoningEntry.content,
+    )
+    expect(outbound.input[0].encrypted_content).toBe(
+      enabled ? undefined : "cipher-40",
+    )
+    expect(outbound.input[1]).toEqual(
+      enabled ?
+        {
+          type: nativeReasoning.type,
+          id: nativeReasoning.id,
+          summary: [],
+          content: [],
+        }
+      : nativeReasoning,
+    )
+    expect(outbound.input[2]).toEqual(message)
+  },
+)
 
 test("clears GPT reasoning content by default and keeps other fields", async () => {
   const { text } = await send(

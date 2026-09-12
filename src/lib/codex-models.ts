@@ -8,6 +8,7 @@ import { deepSeekCodexModels } from "~/providers/deepseek/models"
 import type { ModelSource, PublishedModels } from "./model-sources"
 
 import { HTTPError } from "./error"
+import { addModelSeparators, isModelSeparator } from "./model-separators"
 import { formatSourceModel, parseSourceModel } from "./model-sources"
 
 const CATALOG_URL =
@@ -180,6 +181,12 @@ export async function loadBaseCatalog(
   }
   const officialModels = [...entries.keys()]
 
+  const extensionModels = (options.extensionModels ?? []).map((model) => {
+    const slug = String(model.slug)
+    entries.set(slug, model)
+    return slug
+  })
+
   const customModels: Array<string> = []
   for (const file of options.customFiles) {
     const custom = await readCatalogPayload(file)
@@ -189,12 +196,6 @@ export async function loadBaseCatalog(
       entries.set(model.slug, model)
     }
   }
-
-  const extensionModels = (options.extensionModels ?? []).map((model) => {
-    const slug = String(model.slug)
-    entries.set(slug, model)
-    return slug
-  })
 
   const metadata = Object.fromEntries(
     Object.entries(upstream ?? {}).filter(([key]) => key !== "models"),
@@ -246,7 +247,8 @@ export function buildCatalogEntries(options: {
   published: PublishedModels
 }): Array<CodexCatalogEntry> {
   const { base, published } = options
-  if (!published.suffixMode) return [...base.entries.values()]
+  if (!published.suffixMode)
+    return sortCatalogEntries([...base.entries.values()])
 
   const variantsByBase = new Map<string, Array<string>>()
   for (const entry of published.entries.values()) {
@@ -276,7 +278,24 @@ export function buildCatalogEntries(options: {
       entries.push(mapped)
     }
   }
+  return sortCatalogEntries(entries)
+}
+
+/** Keep the file order and Codex's priority-based picker order consistent. */
+function sortCatalogEntries(
+  entries: Array<CodexCatalogEntry>,
+): Array<CodexCatalogEntry> {
+  const rank = (entry: CodexCatalogEntry): number => {
+    const slug = String(entry.slug)
+    if (parseSourceModel(slug)?.source === "codex") return 0
+    return slug.startsWith("deepseek-") ? 1 : 2
+  }
   return entries
+    .toSorted((a, b) => rank(a) - rank(b))
+    .map((entry, index) => ({
+      ...entry,
+      ...(typeof entry.priority === "number" ? { priority: index + 1 } : {}),
+    }))
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -331,7 +350,23 @@ export async function writePublishedCatalog(
   })
   await writeCatalogFile(options.outputFile, {
     ...options.base.metadata,
-    models,
+    models: addModelSeparators(
+      models.filter((entry) => !isModelSeparator(String(entry.slug))),
+      (entry) =>
+        parseSourceModel(String(entry.slug))?.source
+        ?? (String(entry.slug).startsWith("deepseek-") ?
+          "deepseek"
+        : "copilot"),
+      (entry, id) => ({
+        ...entry,
+        slug: id,
+        display_name: id,
+        description: "Section separator — select a model below",
+        visibility: "list",
+        upgrade: null,
+        auto_review_model_override: null,
+      }),
+    ).map((entry, index) => ({ ...entry, priority: index + 1 })),
   })
   consola.info(
     `Updated Codex model catalog: ${options.outputFile} (${models.length} models)`,

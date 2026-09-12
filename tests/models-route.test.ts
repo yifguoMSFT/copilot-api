@@ -42,7 +42,6 @@ const withCodex = (models: Array<string>): RuntimeConfig => {
       codex: {
         ...providers.codex,
         enabled: true,
-        gatewayApiKey: "gateway-key",
         models,
       },
     },
@@ -76,6 +75,32 @@ afterEach(() => {
 })
 
 describe("model catalogue", () => {
+  test("orders Codex, DeepSeek and Copilot including bare models and aliases", async () => {
+    const config = withCodex(["gpt-5.6-luna"])
+    config.providers.deepseek.enabled = true
+    state.runtimeConfig = config
+    state.models = {
+      data: [copilotModel, { ...copilotModel, id: "gpt-5.6-luna" }],
+      object: "list",
+    }
+    state.publishedModels = publishedFor(
+      config,
+      ["gpt-5.6-luna"],
+      ["gpt-5.6-luna"],
+    )
+    const { data } = await listModels("/v1/models")
+    expect(data.map((model) => model.id)).toEqual([
+      "----codex----",
+      "gpt-5.6-luna(codex)",
+      "----deepseek----",
+      "deepseek-flash",
+      "deepseek-v4-pro",
+      "----copilot----",
+      "gpt-5.6-luna(copilot)",
+      "gpt-copilot",
+      "codex-auto-review",
+    ])
+  })
   test("publishes one suffixed entry per source and hides the bare id", async () => {
     const config = withCodex(["gpt-5.6-luna"])
     state.models = {
@@ -132,7 +157,10 @@ describe("model catalogue", () => {
 
     const { data } = await listModels("/models")
 
-    expect(data.map((model) => model.id)).toEqual(["gpt-copilot"])
+    expect(data.map((model) => model.id)).toEqual([
+      "----copilot----",
+      "gpt-copilot",
+    ])
   })
 
   test("publishes configured DeepSeek models only while that provider is enabled", async () => {
@@ -148,7 +176,7 @@ describe("model catalogue", () => {
     const { data } = await listModels("/models")
 
     expect(data.filter((model) => model.owned_by === "deepseek")).toHaveLength(
-      providers.deepseek.models.length,
+      providers.deepseek.models.length + 1,
     )
   })
 })

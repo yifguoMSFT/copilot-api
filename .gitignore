@@ -12,3 +12,9 @@ node_modules/
 
 # build output
 dist/
+.kanban-acceptance
+worktrees
+*kanban*
+/codex-models-custom.json
+/config.json
+/reference

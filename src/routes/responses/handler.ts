@@ -13,10 +13,7 @@ import { createCodexResponses } from "~/services/codex/forward-responses"
 import { createResponses } from "~/services/copilot/create-responses"
 import { createDeepSeekResponses } from "~/services/deepseek/create-responses"
 
-import {
-  authorizeCodexRequest,
-  toCodexAuthErrorResponse,
-} from "./codex-passthrough"
+import { toCodexAuthErrorResponse } from "./codex-passthrough"
 import { stripReasoningContent } from "./gpt-reasoning-content"
 import { normalizeResponsesItemIds } from "./sse-item-id-normalizer"
 
@@ -129,8 +126,8 @@ export async function handleResponse(c: Context): Promise<Response> {
 type CodexForwardResult = { upstream: Response } | { error: Response }
 
 /**
- * Codex requests authenticate with the local credential store, so a gateway
- * rejection is answered with the local error envelope instead of falling back
+ * Codex requests authenticate with the local credential store, so a login
+ * failure is answered with the local error envelope instead of falling back
  * to another provider.
  */
 const forwardCodexRequest = async (request: {
@@ -140,8 +137,6 @@ const forwardCodexRequest = async (request: {
   signal: AbortSignal | undefined
 }): Promise<CodexForwardResult> => {
   const { body, codexConfig, headers, signal } = request
-  const unauthorized = authorizeCodexRequest(headers, codexConfig)
-  if (unauthorized !== undefined) return { error: unauthorized }
 
   try {
     return {
@@ -195,6 +190,11 @@ const logUpstreamReady = (
 
 const formatModelLabel = (requestedModel?: string): string => {
   if (requestedModel === undefined) return "unknown model"
+  if (
+    requestedModel === "codex-auto-review"
+    && state.runtimeConfig?.providers.codex.enabled
+  )
+    return requestedModel
 
   const resolvedModel = resolveModelAlias(requestedModel)
   if (resolvedModel === requestedModel) return requestedModel
@@ -246,8 +246,8 @@ const resolveResponseModel = (
     }
 
     if (
-      route.provider === "copilot"
-      && route.upstreamModel.startsWith("gpt-")
+      (route.provider === "copilot" || route.provider === "codex")
+      && (route.provider === "codex" || route.upstreamModel.startsWith("gpt-"))
       && config.providers.copilot.stripReasoningContentForGpt
       && Array.isArray(nextPayload.input)
     ) {

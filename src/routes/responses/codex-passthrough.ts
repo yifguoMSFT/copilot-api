@@ -1,32 +1,7 @@
-import type { RuntimeConfig } from "~/lib/runtime-config"
-
 import {
   CodexAuthRequiredError,
   CodexAuthUnavailableError,
 } from "~/services/codex/auth-manager"
-
-type CodexProviderConfig = RuntimeConfig["providers"]["codex"]
-
-/**
- * Only Codex routes are protected by the gateway key; the existing
- * Copilot/DeepSeek callers keep their current reachability. The key never
- * travels upstream, it only guards the local endpoint.
- */
-export function authorizeCodexRequest(
-  headers: Headers,
-  config: CodexProviderConfig,
-): Response | undefined {
-  const presented = readPresentedKey(headers)
-  if (presented !== undefined && presented === config.gatewayApiKey) {
-    return undefined
-  }
-
-  return codexErrorResponse(
-    401,
-    "gateway_unauthorized",
-    "Missing or invalid gateway API key",
-  )
-}
 
 export function toCodexAuthErrorResponse(
   error: unknown,
@@ -67,15 +42,4 @@ function codexErrorResponse(
       status,
     },
   )
-}
-
-function readPresentedKey(headers: Headers): string | undefined {
-  const apiKey = headers.get("x-api-key")
-  if (apiKey !== null && apiKey.trim().length > 0) return apiKey.trim()
-
-  const authorization = headers.get("authorization")
-  if (authorization === null) return undefined
-
-  const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim())
-  return match?.[1]
 }

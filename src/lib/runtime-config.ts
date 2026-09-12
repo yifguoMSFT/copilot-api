@@ -51,7 +51,6 @@ export interface RuntimeConfig {
       authProfile: string
       baseUrl: string
       enabled: boolean
-      gatewayApiKey: string
       models: Array<string>
       transport: "http"
     }
@@ -82,7 +81,6 @@ export const defaultProviderConfig = (): Omit<
       authProfile: DEFAULT_CODEX_PROFILE,
       baseUrl: `${CODEX_UPSTREAM_ORIGIN}/backend-api/codex`,
       enabled: false,
-      gatewayApiKey: "",
       models: [],
       transport: "http",
     },
@@ -162,19 +160,12 @@ function mergeLayer(
 }
 
 /**
- * Rejects a Codex provider that could not serve requests safely: no gateway
- * key, an upstream that is not the verified origin, or a profile name that
+ * Rejects a Codex provider that could not serve requests safely: an upstream that is not the verified origin, or a profile name that
  * could escape the credential directory. An omitted model list is valid and
  * means "every official catalog model"; the catalog itself is loaded later.
  */
 function assertCodexProvider(codex: RuntimeConfig["providers"]["codex"]): void {
   if (!codex.enabled) return
-
-  if (codex.gatewayApiKey.trim().length === 0) {
-    throw new Error(
-      "Missing Codex gateway API key; set COPILOT_API_GATEWAY_API_KEY before enabling the Codex provider",
-    )
-  }
 
   if (new URL(codex.baseUrl).origin !== CODEX_UPSTREAM_ORIGIN) {
     throw new Error(
@@ -225,8 +216,5 @@ function applyEnvironment(
   }
   if (env.COPILOT_API_CODEX_AUTH_PROFILE !== undefined) {
     config.providers.codex.authProfile = env.COPILOT_API_CODEX_AUTH_PROFILE
-  }
-  if (env.COPILOT_API_GATEWAY_API_KEY !== undefined) {
-    config.providers.codex.gatewayApiKey = env.COPILOT_API_GATEWAY_API_KEY
   }
 }

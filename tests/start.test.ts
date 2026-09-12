@@ -36,7 +36,6 @@ describe("provider bootstrap", () => {
       codex: {
         ...defaultProviderConfig().providers.codex,
         enabled: true,
-        gatewayApiKey: "gateway-secret",
         models: ["codex-test-model"],
       },
       copilot: { enabled: false, stripReasoningContentForGpt: true },
@@ -90,7 +89,6 @@ describe("provider bootstrap", () => {
       codex: {
         ...defaultProviderConfig().providers.codex,
         enabled: true,
-        gatewayApiKey: "gateway-secret",
         models: ["codex-test-model"],
       },
     })

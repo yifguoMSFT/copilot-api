@@ -69,7 +69,6 @@ beforeAll(() => {
       codex: {
         ...defaultProviderConfig().providers.codex,
         enabled: true,
-        gatewayApiKey: "gateway-secret",
         models: ["codex-test-model"],
       },
     },

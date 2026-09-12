@@ -109,7 +109,6 @@ test("keeps the Codex provider disabled for existing configurations", async () =
     authProfile: "default",
     baseUrl: "https://chatgpt.com/backend-api/codex",
     enabled: false,
-    gatewayApiKey: "",
     models: [],
     transport: "http",
   })
@@ -130,14 +129,13 @@ test("enables the Codex provider from configuration and environment", async () =
   })
   const config = await loadRuntimeConfig({
     configPath: file,
-    env: { COPILOT_API_GATEWAY_API_KEY: "gateway-secret" },
+    env: {},
   })
 
   expect(config.providers.codex).toEqual({
     authProfile: "work",
     baseUrl: "https://chatgpt.com/backend-api/codex",
     enabled: true,
-    gatewayApiKey: "gateway-secret",
     models: ["codex-test-model"],
     transport: "http",
   })
@@ -147,7 +145,6 @@ test("enables the Codex provider from configuration and environment", async () =
     env: {
       COPILOT_API_CODEX_AUTH_PROFILE: "personal",
       COPILOT_API_CODEX_ENABLED: "false",
-      COPILOT_API_GATEWAY_API_KEY: "gateway-secret",
     },
   })
   expect(overridden.providers.codex.enabled).toBe(false)
@@ -167,14 +164,14 @@ test("allows a Codex-only configuration", async () => {
 
   const config = await loadRuntimeConfig({
     configPath: file,
-    env: { COPILOT_API_GATEWAY_API_KEY: "gateway-secret" },
+    env: {},
   })
 
   expect(config.providers.copilot.enabled).toBe(false)
   expect(config.providers.codex.enabled).toBe(true)
 })
 
-test("fails when Codex is enabled without a gateway key", async () => {
+test("enables Codex without a gateway key", async () => {
   const file = await fixture({
     version: 1,
     defaults: {
@@ -182,9 +179,8 @@ test("fails when Codex is enabled without a gateway key", async () => {
     },
   })
 
-  expect(loadRuntimeConfig({ configPath: file, env: {} })).rejects.toThrow(
-    "gateway API key",
-  )
+  const config = await loadRuntimeConfig({ configPath: file, env: {} })
+  expect(config.providers.codex.enabled).toBe(true)
 })
 
 test("accepts an enabled Codex provider without an explicit model list", async () => {
@@ -197,7 +193,7 @@ test("accepts an enabled Codex provider without an explicit model list", async (
 
   const config = await loadRuntimeConfig({
     configPath: file,
-    env: { COPILOT_API_GATEWAY_API_KEY: "gateway-secret" },
+    env: {},
   })
 
   // An omitted list is the documented "every official catalog model" default.
@@ -213,7 +209,7 @@ test("rejects an explicitly empty Codex model list", async () => {
   expect(
     loadRuntimeConfig({
       configPath: file,
-      env: { COPILOT_API_GATEWAY_API_KEY: "gateway-secret" },
+      env: {},
     }),
   ).rejects.toThrow()
 })
@@ -235,7 +231,7 @@ test("refuses to point the ChatGPT credential at another origin", async () => {
   expect(
     loadRuntimeConfig({
       configPath: file,
-      env: { COPILOT_API_GATEWAY_API_KEY: "gateway-secret" },
+      env: {},
     }),
   ).rejects.toThrow("must stay on https://chatgpt.com")
 })
@@ -257,7 +253,7 @@ test("refuses an unsafe Codex credential profile", async () => {
   expect(
     loadRuntimeConfig({
       configPath: file,
-      env: { COPILOT_API_GATEWAY_API_KEY: "gateway-secret" },
+      env: {},
     }),
   ).rejects.toThrow("Invalid Codex authProfile")
 })
@@ -279,7 +275,7 @@ test("rejects a Codex transport that is not implemented", async () => {
   expect(
     loadRuntimeConfig({
       configPath: file,
-      env: { COPILOT_API_GATEWAY_API_KEY: "gateway-secret" },
+      env: {},
     }),
   ).rejects.toThrow()
 })

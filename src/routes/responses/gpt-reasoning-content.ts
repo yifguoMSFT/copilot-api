@@ -18,11 +18,13 @@ export function stripReasoningContent(
     }
     const entry = item as Record<string, unknown>
     if (entry.type !== "reasoning") return item
-    if (!Array.isArray(entry.content) || entry.content.length === 0) return item
+    const parts = Array.isArray(entry.content) ? entry.content.length : 0
+    if (parts === 0 && !Object.hasOwn(entry, "encrypted_content")) return item
 
     indices.push(index)
-    contentParts += entry.content.length
-    const sanitized: Record<string, unknown> = { ...entry, content: [] }
+    contentParts += parts
+    const sanitized: Record<string, unknown> = { ...entry }
+    if (parts > 0) sanitized.content = []
     if (Object.hasOwn(sanitized, "encrypted_content")) {
       encryptedContent += 1
       delete sanitized.encrypted_content
