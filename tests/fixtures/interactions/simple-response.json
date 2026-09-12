@@ -1,0 +1,33 @@
+{
+  "created": "2025-11-26T12:25:15Z",
+  "id": "v1_ChdPU0F4YWFtNkFwS2kxZThQZ05lbXdROBIXT1NBeGFhbTZBcEtpMWU4UGdOZW13UTg",
+  "model": "gemini-3.6-flash",
+  "object": "interaction",
+  "status": "completed",
+  "steps": [
+    {
+      "type": "model_output",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hello! I'm functioning perfectly and ready to assist you.\n\nHow are you doing today?"
+        }
+      ]
+    }
+  ],
+  "updated": "2025-11-26T12:25:15Z",
+  "usage": {
+    "input_tokens_by_modality": [
+      {
+        "modality": "text",
+        "tokens": 7
+      }
+    ],
+    "total_cached_tokens": 0,
+    "total_input_tokens": 7,
+    "total_output_tokens": 20,
+    "total_thought_tokens": 22,
+    "total_tokens": 49,
+    "total_tool_use_tokens": 0
+  }
+}

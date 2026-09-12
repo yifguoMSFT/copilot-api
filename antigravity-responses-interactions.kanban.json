@@ -1,0 +1,125 @@
+{
+  "created_at": "2026-09-12T03:46:40Z",
+  "kind": "kanban-blueprint",
+  "tasks": [
+    {
+      "created_at": "2026-09-12T03:46:44Z",
+      "created_by": "user",
+      "id": "baseline_commit_for_interactions_converter",
+      "parents": [],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [],
+      "task_markdown": "依据 [[ANTIGRAVITY_RESPONSES_INTERACTIONS_IMPLEMENTATION_TEST_DESIGN_CN.md]]，遵循 /simplicity-first SKILL。仅在 I:/Cache/workshop/worktree/copilot-api-antigravity-interactions 的 antigravity-interactions 分支执行。实施阶段仅新增设计 §2 清单内的转换器、测试、fixtures 与报告；禁止修改已有源码、测试、配置、依赖、模型目录、启动逻辑或添加接线。无网络、登录、鉴权、provider、数据库、图片、多媒体或 WebSocket 实现；不参考 CLIProxyAPI。\n\n记录分支与 HEAD，检查 git status --short、git diff --stat、git diff --cached --stat 及未跟踪文件。基线提交只包含本次修正的设计和本看板；官方快照只读，其余文件排除。记录实施基线 commit，后续以此审计已有文件零修改。不 push、amend 或切换分支。",
+      "title": "Baseline commit for Interactions converter",
+      "updated_at": "2026-09-12T04:27:02Z",
+      "verification": "有合格改动则真实提交，记录前后 HEAD、git log -1 与 git show --stat HEAD；无合格改动则记录检查与 Skipped: no changes to commit，不创建空提交。失败不能作为跳过。",
+      "workspace_hint": "I:/Cache/workshop/worktree/copilot-api-antigravity-interactions"
+    },
+    {
+      "created_at": "2026-09-12T03:47:11Z",
+      "created_by": "user",
+      "id": "define_converter_protocol_fixtures",
+      "parents": [
+        "baseline_commit_for_interactions_converter"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [],
+      "task_markdown": "依据 [[ANTIGRAVITY_RESPONSES_INTERACTIONS_IMPLEMENTATION_TEST_DESIGN_CN.md]]，遵循 /simplicity-first SKILL。仅在 I:/Cache/workshop/worktree/copilot-api-antigravity-interactions 的 antigravity-interactions 分支执行。实施阶段仅新增设计 §2 清单内的转换器、测试、fixtures 与报告；禁止修改已有源码、测试、配置、依赖、模型目录、启动逻辑或添加接线。无网络、登录、鉴权、provider、数据库、图片、多媒体或 WebSocket 实现；不参考 CLIProxyAPI。\n\n仅依据已抓取的官方快照建立 tests/fixtures/interactions/ 中的脱敏样本与来源说明。人工核对文本、指令、function/custom、reasoning 重放、原始 ID、usage 口径及不支持字段。限定 Google AI Interactions 文档契约；不把它视为 Antigravity OAuth endpoint 的兼容证明。不请求真实凭据；没有证据的语义明确拒绝或标注未验证。",
+      "title": "Define converter protocol fixtures",
+      "updated_at": "2026-09-12T04:27:04Z",
+      "verification": "fixture 期望值独立核对，区分官方样本与构造样本；明确支持/拒绝行为。真实客户端接受 ID、签名包装和实际缓存效果列为未验证，不以网络验收阻塞离线转换实现。",
+      "workspace_hint": "I:/Cache/workshop/worktree/copilot-api-antigravity-interactions"
+    },
+    {
+      "created_at": "2026-09-12T03:47:14Z",
+      "created_by": "user",
+      "id": "implement_request_and_json_conversion",
+      "parents": [
+        "define_converter_protocol_fixtures"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [],
+      "task_markdown": "依据 [[ANTIGRAVITY_RESPONSES_INTERACTIONS_IMPLEMENTATION_TEST_DESIGN_CN.md]]，遵循 /simplicity-first SKILL。仅在 I:/Cache/workshop/worktree/copilot-api-antigravity-interactions 的 antigravity-interactions 分支执行。实施阶段仅新增设计 §2 清单内的转换器、测试、fixtures 与报告；禁止修改已有源码、测试、配置、依赖、模型目录、启动逻辑或添加接线。无网络、登录、鉴权、provider、数据库、图片、多媒体或 WebSocket 实现；不参考 CLIProxyAPI。\n\n新增 convert.ts 与 interactions-convert.test.ts。实现请求/JSON 纯函数，显式传入模型名；转换文本、指令、参数、function/custom、call_id、终态及 usage，保留原文顺序。thought 包装仅做客户端携带数据的可逆转换。session-id/prompt_cache_key 通过 metadata 原样带出，无文档映射不加入 Google body。输入不变，不读取全局 state/runtime-config/环境变量。",
+      "title": "Implement request and JSON conversion",
+      "updated_at": "2026-09-12T04:27:07Z",
+      "verification": "新增 Bun 测试验证多轮、工具往返、非法 JSON、custom input、reasoning 可逆包装、ID、显式父引用、store:false、metadata、统计零值/缺失及输入不被修改；未知或无法等价转换的语义明确报错。",
+      "workspace_hint": "I:/Cache/workshop/worktree/copilot-api-antigravity-interactions"
+    },
+    {
+      "created_at": "2026-09-12T03:47:16Z",
+      "created_by": "user",
+      "id": "implement_interactions_sse_conversion",
+      "parents": [
+        "implement_request_and_json_conversion"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [],
+      "task_markdown": "依据 [[ANTIGRAVITY_RESPONSES_INTERACTIONS_IMPLEMENTATION_TEST_DESIGN_CN.md]]，遵循 /simplicity-first SKILL。仅在 I:/Cache/workshop/worktree/copilot-api-antigravity-interactions 的 antigravity-interactions 分支执行。实施阶段仅新增设计 §2 清单内的转换器、测试、fixtures 与报告；禁止修改已有源码、测试、配置、依赖、模型目录、启动逻辑或添加接线。无网络、登录、鉴权、provider、数据库、图片、多媒体或 WebSocket 实现；不参考 CLIProxyAPI。\n\n新增 stream.ts 与 interactions-stream.test.ts。输入 SSE 字节分片、输出 Responses SSE；只维护单实例缓冲。处理初始内容、多工具、reasoning/签名、稳定 ID、sequence_number、终态缺输出和去重。支持结束输入与取消清理；不拥有 fetch/reader。",
+      "title": "Implement Interactions SSE conversion",
+      "updated_at": "2026-09-12T04:27:09Z",
+      "verification": "验证 UTF-8、CRLF、多行 data、心跳、坏帧、异常 EOF、缓冲上限、取消后无输出、单一终态和完整 done 顺序。畸形输入不能静默丢弃后成功。运行新增 SSE 测试。",
+      "workspace_hint": "I:/Cache/workshop/worktree/copilot-api-antigravity-interactions"
+    },
+    {
+      "created_at": "2026-09-12T03:47:20Z",
+      "created_by": "user",
+      "id": "test_converter_offline_round_trips",
+      "parents": [
+        "implement_interactions_sse_conversion"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [],
+      "task_markdown": "依据 [[ANTIGRAVITY_RESPONSES_INTERACTIONS_IMPLEMENTATION_TEST_DESIGN_CN.md]]，遵循 /simplicity-first SKILL。仅在 I:/Cache/workshop/worktree/copilot-api-antigravity-interactions 的 antigravity-interactions 分支执行。实施阶段仅新增设计 §2 清单内的转换器、测试、fixtures 与报告；禁止修改已有源码、测试、配置、依赖、模型目录、启动逻辑或添加接线。无网络、登录、鉴权、provider、数据库、图片、多媒体或 WebSocket 实现；不参考 CLIProxyAPI。\n\n新增 tests/interactions-round-trip.test.ts，模拟请求→Interactions fixture 响应→Responses 输出→客户端保存历史和 reasoning→工具结果回传→新转换器实例。验证 JSON/SSE 最终内容一致、请求交错隔离、稳定文本前缀、metadata 保留和 usage 映射。仅调用转换器，不创建 HTTP provider 或 route 测试。",
+      "title": "Test converter offline round trips",
+      "updated_at": "2026-09-12T04:27:12Z",
+      "verification": "function/custom 工具和 thought 数据可离线往返，call_id 稳定，store:false 不补历史、不隐式加父引用；全新实例得到一致输出，不依赖会话存储。不得把 metadata 保留当成真实缓存命中证明。",
+      "workspace_hint": "I:/Cache/workshop/worktree/copilot-api-antigravity-interactions"
+    },
+    {
+      "created_at": "2026-09-12T03:47:24Z",
+      "created_by": "user",
+      "id": "validate_converter_tests_and_additive_scope",
+      "parents": [
+        "test_converter_offline_round_trips"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [],
+      "task_markdown": "依据 [[ANTIGRAVITY_RESPONSES_INTERACTIONS_IMPLEMENTATION_TEST_DESIGN_CN.md]]，遵循 /simplicity-first SKILL。仅在 I:/Cache/workshop/worktree/copilot-api-antigravity-interactions 的 antigravity-interactions 分支执行。实施阶段仅新增设计 §2 清单内的转换器、测试、fixtures 与报告；禁止修改已有源码、测试、配置、依赖、模型目录、启动逻辑或添加接线。无网络、登录、鉴权、provider、数据库、图片、多媒体或 WebSocket 实现；不参考 CLIProxyAPI。\n\n运行三个新增测试、bun run typecheck、只针对新增 TS 文件的 ESLint（不带 --fix）、bun run build 和 bun test。新增 [[ANTIGRAVITY_INTERACTIONS_TEST_REPORT_CN.md]] 记录结果与局限。对实施基线审计所有已有文件零内容变更，并检查新增文件在设计 §2 范围内。既有失败记录，不修改已有文件修复。",
+      "title": "Validate converter tests and additive scope",
+      "updated_at": "2026-09-12T04:27:14Z",
+      "verification": "报告包括离线往返与 JSON/SSE 对照结果；真实 Codex、Antigravity endpoint、缓存命中明确未验证。现有文件内容不变，没有 route/config/provider/import/export 接线和依赖变更。新增测试通过，基线问题与本次问题区分。",
+      "workspace_hint": "I:/Cache/workshop/worktree/copilot-api-antigravity-interactions"
+    },
+    {
+      "created_at": "2026-09-12T03:47:29Z",
+      "created_by": "user",
+      "id": "final_commit_for_interactions_converter",
+      "parents": [
+        "validate_converter_tests_and_additive_scope"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [],
+      "task_markdown": "依据 [[ANTIGRAVITY_RESPONSES_INTERACTIONS_IMPLEMENTATION_TEST_DESIGN_CN.md]]，遵循 /simplicity-first SKILL。仅在 I:/Cache/workshop/worktree/copilot-api-antigravity-interactions 的 antigravity-interactions 分支执行。实施阶段仅新增设计 §2 清单内的转换器、测试、fixtures 与报告；禁止修改已有源码、测试、配置、依赖、模型目录、启动逻辑或添加接线。无网络、登录、鉴权、provider、数据库、图片、多媒体或 WebSocket 实现；不参考 CLIProxyAPI。\n\n检查 git status --short、git diff --stat、git diff --cached --stat 与未跟踪文件。只提交实施新增的转换器、测试、fixtures 与报告；设计和看板修正已在基线保存。确认已有文件相对实施基线没有内容修改，排除凭据、缓存、生成文件及无关改动。所有前置验证通过后在当前分支提交，不 push、amend 或切换分支。",
+      "title": "Final commit for Interactions converter",
+      "updated_at": "2026-09-12T04:27:20Z",
+      "verification": "有范围内改动时真实提交，记录前后 HEAD、git log -1、git show --stat HEAD；没有合格改动则记录检查与 Skipped: no changes to commit，不创建空提交。失败不能当作跳过。执行上下文记录哈希，不为自引用修改报告。",
+      "workspace_hint": "I:/Cache/workshop/worktree/copilot-api-antigravity-interactions"
+    }
+  ],
+  "updated_at": "2026-09-12T04:27:20Z",
+  "version": 1
+}
