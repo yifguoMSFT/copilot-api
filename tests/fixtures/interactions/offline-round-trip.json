@@ -1,0 +1,28 @@
+{
+  "interaction": {
+    "id": "v1_offline",
+    "created": "2025-11-26T12:25:15Z",
+    "model": "gemini-test",
+    "status": "requires_action",
+    "steps": [
+      { "type": "thought", "summary": [{ "type": "text", "text": "Check both tools." }], "signature": "opaque-signature" },
+      { "type": "function_call", "id": "call_weather", "name": "weather", "arguments": { "city": "東京" } },
+      { "type": "function_call", "id": "call_patch", "name": "patch", "arguments": { "input": "*** Begin Patch\nraw\n" } }
+    ],
+    "usage": { "total_input_tokens": 7, "total_output_tokens": 8, "total_thought_tokens": 3, "total_cached_tokens": 0, "total_tokens": 18 }
+  },
+  "events": [
+    { "event_type": "interaction.created", "interaction": { "id": "v1_offline", "created": "2025-11-26T12:25:15Z", "model": "gemini-test", "status": "in_progress" } },
+    { "event_type": "step.start", "index": 0, "step": { "type": "thought" } },
+    { "event_type": "step.delta", "index": 0, "delta": { "type": "thought_summary", "content": { "type": "text", "text": "Check both tools." } } },
+    { "event_type": "step.stop", "index": 0 },
+    { "event_type": "step.start", "index": 1, "step": { "type": "function_call", "id": "call_weather", "name": "weather" } },
+    { "event_type": "step.delta", "index": 1, "delta": { "type": "arguments_delta", "arguments": "{\"city\":\"東京\"}" } },
+    { "event_type": "step.stop", "index": 1 },
+    { "event_type": "step.start", "index": 2, "step": { "type": "function_call", "id": "call_patch", "name": "patch" } },
+    { "event_type": "step.delta", "index": 2, "delta": { "type": "arguments_delta", "arguments": "{\"input\":\"*** Begin Patch\\nraw\\n\"}" } },
+    { "event_type": "step.stop", "index": 2 },
+    { "event_type": "step.delta", "index": 0, "delta": { "type": "thought_signature", "signature": "opaque-signature" } },
+    { "event_type": "interaction.completed", "interaction": { "id": "v1_offline", "status": "requires_action", "usage": { "total_input_tokens": 7, "total_output_tokens": 8, "total_thought_tokens": 3, "total_cached_tokens": 0, "total_tokens": 18 } } }
+  ]
+}
