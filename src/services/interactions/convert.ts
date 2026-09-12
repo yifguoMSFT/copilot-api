@@ -295,7 +295,9 @@ function toolResult(
     type: "function_result",
     call_id: callId,
     ...(name === undefined ? {} : { name }),
-    result: [{ type: "text", text: messageText(item.output) }],
+    // Responses allows an array of content outputs, and Interactions takes an
+    // array of content blocks, so each block is kept instead of being joined.
+    result: messageTexts(item.output).map((text) => ({ type: "text", text })),
   }
 }
 
@@ -348,7 +350,15 @@ function historyItem(
       return toolResult(item, calls, parentReferenced)
     }
     case "reasoning": {
-      return decodeThought(item.encrypted_content)
+      const envelope = item.encrypted_content
+      // A summary-only item comes from a thought that carried no signature, so
+      // there is nothing the upstream can validate. Say so directly instead of
+      // reporting a generic type error.
+      if (envelope === undefined || envelope === null)
+        throw new InteractionsConversionError(
+          "Reasoning item has no replay envelope; only a signed thought can be replayed",
+        )
+      return decodeThought(envelope)
     }
     case "item_reference":
     case "compaction": {

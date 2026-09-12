@@ -9,10 +9,15 @@ import {
   completed,
   converter,
   created,
+  delta,
   encoder,
   events,
+  failedOutput,
   frame,
+  replay,
+  run,
   start,
+  stop,
 } from "./support/interactions-stream"
 
 const thought = (signature: string, text: string) => ({
@@ -146,5 +151,159 @@ describe("Interactions thought replay", () => {
     )
     expect(decoded).toEqual(source)
     expect((decoded as JsonObject).signature).toBe(source.signature)
+  })
+})
+
+const itemOf = (result: Array<Record<string, unknown>>) =>
+  result.find((event) => event.type === "response.output_item.done")
+    ?.item as JsonObject
+
+describe("Interactions streamed thought fidelity", () => {
+  test("keeps the fields of every summary part the stream declared", () => {
+    const source = {
+      type: "thought",
+      signature: "sig",
+      summary: [{ type: "text", text: "hello", extra_part: 1 }],
+    }
+    expect(replay(itemOf(run([created, start(0, source), completed])))).toEqual(
+      source,
+    )
+  })
+
+  test("keeps the fields of a summary part that arrives as a delta", () => {
+    const result = run([
+      created,
+      start(0, { type: "thought", signature: "sig" }),
+      delta(0, {
+        type: "thought_summary",
+        content: { type: "text", text: "hello", extra_part: 2 },
+      }),
+      completed,
+    ])
+    expect(replay(itemOf(result))).toEqual({
+      type: "thought",
+      signature: "sig",
+      summary: [{ type: "text", text: "hello", extra_part: 2 }],
+    })
+  })
+
+  test("never invents a summary for a signature-only thought", () => {
+    const source = { type: "thought", signature: "sig" }
+    const decoded = replay(itemOf(run([created, start(0, source), completed])))
+    expect(decoded).toEqual(source)
+    expect(decoded).not.toHaveProperty("summary")
+  })
+
+  test("adopts terminal-only fields into the replay envelope", () => {
+    const result = run([
+      created,
+      start(0, { type: "thought", signature: "sig" }),
+      stop(0),
+      {
+        ...completed,
+        interaction: {
+          ...completed.interaction,
+          steps: [
+            {
+              type: "thought",
+              signature: "sig",
+              provider_metadata: { level: "low" },
+            },
+          ],
+        },
+      },
+    ])
+    expect(replay(itemOf(result))).toEqual({
+      type: "thought",
+      signature: "sig",
+      provider_metadata: { level: "low" },
+    })
+  })
+
+  test("adopts a summary that only the terminal snapshot carries", () => {
+    const result = run([
+      created,
+      start(0, { type: "thought" }),
+      stop(0),
+      {
+        ...completed,
+        interaction: {
+          ...completed.interaction,
+          steps: [
+            {
+              type: "thought",
+              signature: "sig",
+              summary: [{ type: "text", text: "late", extra_part: 3 }],
+            },
+          ],
+        },
+      },
+    ])
+    expect(replay(itemOf(result))).toEqual({
+      type: "thought",
+      signature: "sig",
+      summary: [{ type: "text", text: "late", extra_part: 3 }],
+    })
+  })
+
+  test("keeps summary part fields when the stream ends early", () => {
+    const stream = converter()
+    const result = events(
+      stream.push(
+        encoder.encode(
+          [
+            created,
+            start(0, { type: "thought" }),
+            delta(0, {
+              type: "thought_summary",
+              content: { type: "text", text: "thinking", extra_part: 4 },
+            }),
+            delta(0, { type: "thought_signature", signature: "signed" }),
+          ]
+            .map((value) => frame(value))
+            .join(""),
+        ),
+      ) + stream.flush(),
+    )
+    expect(result.at(-1)?.type).toBe("response.failed")
+    expect(replay(failedOutput(result)[0])).toEqual({
+      type: "thought",
+      signature: "signed",
+      summary: [{ type: "text", text: "thinking", extra_part: 4 }],
+    })
+  })
+
+  test("fails when the terminal snapshot contradicts streamed thought text", () => {
+    const result = run([
+      created,
+      start(0, { type: "thought", summary: [{ type: "text", text: "a" }] }),
+      stop(0),
+      {
+        ...completed,
+        interaction: {
+          ...completed.interaction,
+          steps: [{ type: "thought", summary: [{ type: "text", text: "b" }] }],
+        },
+      },
+    ])
+    expect(result.at(-1)?.type).toBe("response.failed")
+  })
+
+  test("reports the same thought through the JSON and stream paths", () => {
+    const source = {
+      type: "thought",
+      signature: "sig",
+      summary: [{ type: "text", text: "hello", extra_part: 1 }],
+      provider_metadata: { level: "low" },
+    }
+    const [jsonItem] = response({
+      id: "v1_thought",
+      model: "gemini",
+      status: "completed",
+      steps: [source],
+    }).output as Array<JsonObject>
+    expect(replay(itemOf(run([created, start(0, source), completed])))).toEqual(
+      replay(jsonItem),
+    )
   })
 })

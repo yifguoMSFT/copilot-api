@@ -20,7 +20,14 @@ interface StepState {
   outputIndex: number
   step: JsonObject
   args: string
-  parts: Array<string>
+  /**
+   * Content parts observed for this step. A thought keeps the upstream summary
+   * objects so fields beyond `type`/`text` survive into the replay envelope and
+   * "no summary" stays distinguishable from "empty summary".
+   */
+  parts: Array<JsonObject>
+  /** Whether the upstream declared a summary, including an empty one. */
+  summaryDeclared: boolean
   stopped: boolean
   done: boolean
   item?: JsonObject
@@ -226,6 +233,7 @@ export class InteractionsEventStream {
       // call still arrives as a single delta holding the whole JSON text.
       args: "",
       parts: [],
+      summaryDeclared: false,
       stopped: false,
       done: false,
     }
@@ -245,8 +253,8 @@ export class InteractionsEventStream {
     })
     const contents = step.type === "thought" ? step.summary : step.content
     if (Array.isArray(contents)) {
-      for (const part of contents)
-        this.addPart(state, string(object(part).text))
+      if (step.type === "thought") state.summaryDeclared = true
+      for (const part of contents) this.addPart(state, object(part))
     }
   }
 
@@ -270,9 +278,11 @@ export class InteractionsEventStream {
           throw new InteractionsConversionError("Text on non-message step")
         const text = string(delta.text)
         this.account(text)
-        if (state.parts.length === 0) this.addPart(state, "")
+        if (state.parts.length === 0)
+          this.addPart(state, { type: "text", text: "" })
         const contentIndex = state.parts.length - 1
-        state.parts[contentIndex] += text
+        const part = state.parts[contentIndex]
+        part.text = `${string(part.text)}${text}`
         this.emit("response.output_text.delta", {
           ...this.coordinates(state),
           content_index: contentIndex,
@@ -296,9 +306,9 @@ export class InteractionsEventStream {
         const content = object(delta.content)
         if (content.type !== "text")
           throw new InteractionsConversionError("Unsupported thought summary")
-        const text = string(content.text)
-        this.account(text)
-        this.addPart(state, text)
+        this.account(string(content.text))
+        state.summaryDeclared = true
+        this.addPart(state, content)
         return
       }
       case "thought_signature": {
@@ -321,21 +331,22 @@ export class InteractionsEventStream {
     }
   }
 
-  private addPart(state: StepState, text: string): void {
+  private addPart(state: StepState, part: JsonObject): void {
     const index = state.parts.length
-    state.parts.push(text)
+    const text = string(part.text)
+    state.parts.push(structuredClone(part))
     const thought = state.step.type === "thought"
     const key = thought ? "summary_index" : "content_index"
     const prefix =
       thought ? "response.reasoning_summary_part" : "response.content_part"
-    const part =
+    const wirePart =
       thought ?
         { type: "summary_text", text: "" }
       : { type: "output_text", text: "", annotations: [] }
     this.emit(`${prefix}.added`, {
       ...this.coordinates(state),
       [key]: index,
-      part,
+      part: wirePart,
     })
     if (text !== "")
       this.emit(
@@ -369,15 +380,25 @@ export class InteractionsEventStream {
 
   private materialize(state: StepState): JsonObject {
     const step = { ...state.step }
-    if (step.type === "function_call")
+    if (step.type === "function_call") {
       step.arguments =
         state.args === "" ?
           object(state.step.arguments ?? {})
         : parseArguments(state.args)
-    else
-      step[step.type === "thought" ? "summary" : "content"] = state.parts.map(
-        (text) => ({ type: "text", text }),
-      )
+      return step
+    }
+    if (step.type === "thought") {
+      // Matches the JSON conversion: a thought that never declared a summary
+      // must not gain an empty one, and observed parts keep their extra fields.
+      if (state.summaryDeclared)
+        step.summary = state.parts.map((part) => structuredClone(part))
+      else delete step.summary
+      return step
+    }
+    step.content = state.parts.map((part) => ({
+      type: "text",
+      text: string(part.text),
+    }))
     return step
   }
 
@@ -404,7 +425,8 @@ export class InteractionsEventStream {
 
   private finishParts(state: StepState): void {
     const thought = state.step.type === "thought"
-    for (const [index, text] of state.parts.entries()) {
+    for (const [index, part] of state.parts.entries()) {
+      const text = string(part.text)
       const coordinates = {
         ...this.coordinates(state),
         [thought ? "summary_index" : "content_index"]: index,
@@ -473,31 +495,42 @@ export class InteractionsEventStream {
       const terminal = object(step)
       const streamed = this.materialize(state)
       // The terminal snapshot may omit optional fields the stream already
-      // sent, and it may fill in a signature that arrived only with it. Only a
-      // genuine disagreement about what was already streamed is an error.
-      if (terminal.signature !== undefined) {
-        const signature = string(terminal.signature)
-        if (
-          streamed.signature !== undefined
-          && !isDeepStrictEqual(streamed.signature, signature)
-        )
-          throw new InteractionsConversionError(
-            "Terminal content differs from stream",
-          )
-        state.step.signature = signature
-      }
-      for (const [key, received] of Object.entries(streamed)) {
-        const final = terminal[key]
-        if (
-          key !== "signature"
-          && final !== undefined
-          && !isDeepStrictEqual(received, final)
-        )
+      // sent, and it may carry fields that arrived only with it. Anything the
+      // stream already produced must agree; missing fields are filled in,
+      // because dropping them would lose replay data the client needs.
+      for (const [key, final] of Object.entries(terminal)) {
+        const received = streamed[key]
+        if (received === undefined) {
+          this.fill(state, key, final)
+          continue
+        }
+        if (!isDeepStrictEqual(received, final))
           throw new InteractionsConversionError(
             "Terminal content differs from stream",
           )
       }
     }
+  }
+
+  /** Adopts a terminal-only field into this single-response replay state. */
+  private fill(state: StepState, key: string, value: unknown): void {
+    if (state.step.type === "thought") {
+      // The two replay fields are typed here so a malformed terminal value
+      // fails in the same place it did before rather than inside the failure
+      // path, which must stay non-throwing.
+      if (key === "signature") {
+        state.step.signature = string(value)
+        return
+      }
+      if (key === "summary") {
+        if (!Array.isArray(value))
+          throw new InteractionsConversionError("Invalid terminal summary")
+        state.summaryDeclared = true
+        state.parts = value.map((part) => structuredClone(object(part)))
+        return
+      }
+    }
+    state.step[key] = value
   }
 
   private envelope(status: string): JsonObject {

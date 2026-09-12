@@ -8,6 +8,10 @@
 
 本次只审核并新增本文，没有修改代码、看板或用户并发改动。复跑 `bun test tests/interactions`：126 pass、0 fail、422 assertions。另用 Bun stdin 直接调用现有转换函数完成下述反例；未调用真实 Google、未读取 key。既有测试通过不能覆盖这些反例。
 
+## 返工状态（2026-09-12 更新）
+
+R1、R2 已修正，R3 已按结论收窄，逐项实现、测试与命令输出见 [[INTERACTIONS_CONVERSION_FIDELITY_REWORK_REPORT_CN.md]]。本节其余内容保留为修复前的复核记录，其中“修复前行为”的描述均已被对应反例测试固定下来。
+
 ## 计划对照
 
 | 计划项 | 复核评价 |
@@ -22,7 +26,7 @@
 
 ## 必须返工
 
-### R1 · P1：SSE thought 回放对象被重建，字段丢失
+### R1 · P1：SSE thought 回放对象被重建，字段丢失（已完成）
 
 位置：`src/services/interactions/stream.ts` 的 `materialize()`、`delta()`、`verifySnapshot()`。
 
@@ -41,7 +45,7 @@
 
 验收：start、delta、terminal 三个来源分别覆盖额外字段；signature-only 对象往返深度相等；正常完成和签名后 EOF/error 的回放对象均深度相等；JSON 与 SSE 对同一完整 thought 生成等价回放对象。附加字段是合成测试数据，不宣称 Google 已实际返回这些字段。
 
-### R2 · P1：完整日志存在漏项和字节损失
+### R2 · P1：完整日志存在漏项和字节损失（已完成）
 
 位置：`scripts/interactions-codex-live.ts` 的 `jsonResponse()`、`streamResponse()`、`createBridgeHandler()`。
 
@@ -56,7 +60,7 @@
 
 验收：JSON 成功/转换错误/上游错误均有完整双向记录；非法 UTF-8、EOF 半个字符及正常跨 chunk 内容按字节还原相等；长错误和 signature 原值保留；并发日志可关联且完成时已落盘。只修改联调脚本及其测试，不扩散到业务路由。
 
-### R3 · P2：文档结论和验收证据需收紧
+### R3 · P2：文档结论和验收证据需收紧（已完成；上游 tools 继承语义仍标注未实测）
 
 报告仍写“尚未提交”，实际 HEAD 已是 `49ea45d`。真实验证明确“不写记录文件”，signature 在报告中是缩略展示，因此它属于当时执行者的结果记录，不是本次可独立重放核验的原始 HTTP 证据。
 

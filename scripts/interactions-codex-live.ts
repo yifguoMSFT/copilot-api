@@ -56,6 +56,47 @@ function headersOf(headers: Headers): JsonObject {
 }
 
 /**
+ * Exact bytes in a form a log reader can decode back. Text chunks cannot be
+ * used instead: decoding with replacement turns invalid UTF-8 into U+FFFD, and
+ * a multi-byte character split across chunks or a truncated tail is lost.
+ */
+function rawBytes(value: Uint8Array): string {
+  return Buffer.from(value).toString("base64")
+}
+
+/**
+ * Records the answer the client receives. A JSON body is stored exactly as it
+ * was sent, including error answers; a stream is represented by its head here
+ * and by the chunks the wire records while it is pumped. Headers are the ones
+ * the Fetch API exposes, which is not the same as the bytes on the wire.
+ */
+async function recordDownstream(
+  runtime: BridgeRuntime,
+  id: string,
+  response: Response,
+): Promise<void> {
+  const headers = headersOf(response.headers)
+  if (
+    (response.headers.get("content-type") ?? "").includes("application/json")
+  ) {
+    runtime.record({
+      phase: "downstream_json",
+      id,
+      status: response.status,
+      headers,
+      body: await response.clone().text(),
+    })
+    return
+  }
+  runtime.record({
+    phase: "downstream_stream_head",
+    id,
+    status: response.status,
+    headers,
+  })
+}
+
+/**
  * Local single-user logging. Every value is written exactly as it was received
  * or sent, including credentials, signatures and replay data; the file is kept
  * outside version control. Writes stay on one chain so the caller can await the
@@ -191,6 +232,8 @@ interface Attempt {
   id: string
   request: Request
   payload: unknown
+  /** Bytes as received, so the record survives invalid or split UTF-8. */
+  rawBody: Uint8Array
   stream: boolean
   requestedModel: string
 }
@@ -299,7 +342,12 @@ function streamResponse(context: StreamContext): Response {
   const encoder = new TextEncoder()
   // Records what the converter is fed, so a stream that ends in failure is
   // still reconstructible from the log.
-  const upstreamDecoder = new TextDecoder()
+  runtime.record({
+    phase: "upstream_stream_head",
+    id,
+    status: upstream.status,
+    headers: headersOf(upstream.headers),
+  })
   const streamConverter = createInteractionsEventStream({
     ...converterOptions,
     createdAt: Math.floor(Date.now() / 1000),
@@ -343,7 +391,8 @@ function streamResponse(context: StreamContext): Response {
             runtime.record({
               phase: "upstream_sse",
               id,
-              text: upstreamDecoder.decode(value, { stream: true }),
+              base64: rawBytes(value),
+              length: value.byteLength,
             })
             enqueue(streamConverter.push(value))
           }
@@ -379,7 +428,7 @@ async function respond(
   runtime: BridgeRuntime,
   attempt: Attempt,
 ): Promise<Response> {
-  const { id, request, payload, stream, requestedModel } = attempt
+  const { id, request, payload, rawBody, stream, requestedModel } = attempt
   // Record before conversion so a rejected request is still diagnosable.
   runtime.record({
     phase: "inbound",
@@ -391,6 +440,7 @@ async function respond(
     url: request.url,
     headers: headersOf(request.headers),
     body: payload,
+    body_base64: rawBytes(rawBody),
   })
   let converted
   try {
@@ -486,38 +536,60 @@ export function createBridgeHandler(
 
   return async (request) => {
     const id = runtime.nextRequestId()
+    // Every answer is recorded in one place, so a rejected or failed request is
+    // as reconstructible as a successful one.
+    const answer = async (reply: Response): Promise<Response> => {
+      await recordDownstream(runtime, id, reply)
+      await flushRecords()
+      return reply
+    }
     const url = new URL(request.url)
     if (request.method === "GET" && url.pathname === "/health")
-      return Response.json({
-        ok: true,
-        mode: options.mode,
-        upstreamModel: runtime.upstreamModel,
-      })
+      return answer(
+        Response.json({
+          ok: true,
+          mode: options.mode,
+          upstreamModel: runtime.upstreamModel,
+        }),
+      )
     if (url.pathname !== "/v1/responses")
-      return fail(404, "not_found", "Only POST /v1/responses is served")
+      return answer(fail(404, "not_found", "Only POST /v1/responses is served"))
     if (request.method !== "POST")
-      return fail(405, "method_not_allowed", "Use POST /v1/responses")
+      return answer(fail(405, "method_not_allowed", "Use POST /v1/responses"))
     if (request.headers.get("upgrade") !== null)
-      return fail(
-        400,
-        "websocket_unsupported",
-        "WebSocket upgrades are not supported",
+      return answer(
+        fail(
+          400,
+          "websocket_unsupported",
+          "WebSocket upgrades are not supported",
+        ),
       )
     if (request.headers.get("authorization") !== `Bearer ${options.token}`)
-      return fail(401, "invalid_token", "Missing or invalid local token")
+      return answer(
+        fail(401, "invalid_token", "Missing or invalid local token"),
+      )
     const declared = Number(request.headers.get("content-length") ?? "0")
     if (Number.isFinite(declared) && declared > bodyLimit)
-      return fail(413, "request_too_large", "Request body exceeds limit")
-    const text = await request.text()
-    if (Buffer.byteLength(text) > bodyLimit)
-      return fail(413, "request_too_large", "Request body exceeds limit")
+      return answer(
+        fail(413, "request_too_large", "Request body exceeds limit"),
+      )
+    const rawBody = new Uint8Array(await request.arrayBuffer())
+    if (rawBody.byteLength > bodyLimit)
+      return answer(
+        fail(413, "request_too_large", "Request body exceeds limit"),
+      )
+    const text = new TextDecoder().decode(rawBody)
     let payload: unknown
     try {
       payload = JSON.parse(text)
     } catch {
-      runtime.record({ phase: "invalid_json", id, body: text })
-      await flushRecords()
-      return fail(400, "invalid_json", "Request body must be JSON")
+      runtime.record({
+        phase: "invalid_json",
+        id,
+        body: text,
+        body_base64: rawBytes(rawBody),
+      })
+      return answer(fail(400, "invalid_json", "Request body must be JSON"))
     }
     const model =
       (
@@ -532,13 +604,11 @@ export function createBridgeHandler(
       id,
       request,
       payload,
+      rawBody,
       stream: (payload as JsonObject).stream === true,
       requestedModel: model,
     })
-    // The records for this request are the debugging contract; do not answer
-    // while they are still queued.
-    await flushRecords()
-    return response
+    return answer(response)
   }
 }
 

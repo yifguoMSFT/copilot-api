@@ -308,6 +308,9 @@ describe("Interactions bridge records", () => {
     )
     expect((inbound?.headers as JsonObject)["session-id"]).toBe("session-raw")
     expect(inbound?.body).toEqual(request)
+    expect(
+      Buffer.from(String(inbound?.body_base64), "base64").toString("utf8"),
+    ).toBe(JSON.stringify(request))
 
     const converted = records.find((record) => record.phase === "converted")
     expect(converted?.metadata).toEqual({
@@ -360,28 +363,11 @@ describe("Interactions bridge records", () => {
     expect(
       records.find((record) => record.phase === "upstream_json")?.body,
     ).toBe("{not json")
-  })
-
-  test("records an unparsable inbound body", async () => {
-    const directory = await temporaryDirectory()
-    const recordPath = join(directory, "records.jsonl")
-    const response = await bridge({ recordPath })(
-      new Request(`${ORIGIN}/v1/responses`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${TOKEN}`,
-          "content-type": "application/json",
-        },
-        body: '{"model":',
-      }),
-    )
-    expect(response.status).toBe(400)
-    const records = await lines(recordPath)
-    expect(records).toHaveLength(1)
-    expect(records[0]).toMatchObject({
-      phase: "invalid_json",
-      body: '{"model":',
-    })
+    expect(
+      records.find(
+        (record) => record.phase === "downstream_json" && record.status === 429,
+      )?.body,
+    ).toContain("upstream_429")
   })
 
   test("stores both SSE directions byte for byte", async () => {
@@ -426,11 +412,18 @@ describe("Interactions bridge records", () => {
     expect(downstream).toContain("response.completed")
 
     const records = await lines(recordPath)
-    const upstream = records
-      .filter((record) => record.phase === "upstream_sse")
-      .map((record) => record.text)
-      .join("")
-    expect(upstream).toBe(upstreamText)
+    const upstream = Buffer.concat(
+      records
+        .filter((record) => record.phase === "upstream_sse")
+        .map((record) => Buffer.from(String(record.base64), "base64")),
+    )
+    expect(upstream.toString("utf8")).toBe(upstreamText)
+    expect(
+      records.find((record) => record.phase === "upstream_stream_head"),
+    ).toMatchObject({ status: 200 })
+    expect(
+      records.find((record) => record.phase === "downstream_stream_head"),
+    ).toMatchObject({ status: 200 })
     expect(
       records
         .filter((record) => record.phase === "downstream_sse")
@@ -459,7 +452,7 @@ describe("Interactions bridge records", () => {
     ])
 
     const records = await lines(recordPath)
-    expect(records).toHaveLength(8)
+    expect(records).toHaveLength(10)
     const ids = new Set(records.map((record) => record.id))
     expect(ids.size).toBe(2)
     for (const id of ids) {
@@ -471,8 +464,113 @@ describe("Interactions bridge records", () => {
         "converted",
         "upstream_request",
         "upstream_json",
+        "downstream_json",
       ])
     }
+  })
+})
+
+describe("Interactions bridge record bytes", () => {
+  test("records an unparsable inbound body", async () => {
+    const directory = await temporaryDirectory()
+    const recordPath = join(directory, "records.jsonl")
+    const response = await bridge({ recordPath })(
+      new Request(`${ORIGIN}/v1/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: '{"model":',
+      }),
+    )
+    expect(response.status).toBe(400)
+    const records = await lines(recordPath)
+    expect(records).toHaveLength(2)
+    expect(records[0]).toMatchObject({
+      phase: "invalid_json",
+      body: '{"model":',
+    })
+    expect(
+      Buffer.from(String(records[0]?.body_base64), "base64").toString("utf8"),
+    ).toBe('{"model":')
+    expect(records[1]).toMatchObject({
+      phase: "downstream_json",
+      status: 400,
+    })
+  })
+
+  test("records inbound bytes that are not valid UTF-8", async () => {
+    const directory = await temporaryDirectory()
+    const recordPath = join(directory, "records.jsonl")
+    const bytes = Uint8Array.from([0x7b, 0xff])
+    const response = await bridge({ recordPath })(
+      new Request(`${ORIGIN}/v1/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: bytes,
+      }),
+    )
+    expect(response.status).toBe(400)
+    const records = await lines(recordPath)
+    const invalid = records.find((record) => record.phase === "invalid_json")
+    expect(Buffer.from(String(invalid?.body_base64), "base64")).toEqual(
+      Buffer.from(bytes),
+    )
+  })
+
+  test("records an upstream chunk whose tail is a split character", async () => {
+    const directory = await temporaryDirectory()
+    const recordPath = join(directory, "records.jsonl")
+    const head = frame({
+      event_type: "interaction.created",
+      interaction: { id: "v1_cut", status: "in_progress" },
+    })
+    // Half of a three-byte character: a text decoder replaces or drops it.
+    const split = new TextEncoder().encode("中").slice(0, 2)
+    const chunk = Uint8Array.from([...head, ...split])
+    const handler = bridge({
+      mode: "live",
+      apiKey: "upstream-key",
+      recordPath,
+      fetchImpl: () => streamOf([chunk]),
+    })
+    await (await handler(post(textRequest({ stream: true })))).text()
+    const records = await lines(recordPath)
+    const recorded = Buffer.concat(
+      records
+        .filter((record) => record.phase === "upstream_sse")
+        .map((record) => Buffer.from(String(record.base64), "base64")),
+    )
+    expect(recorded).toEqual(Buffer.from(chunk))
+    expect(recorded.subarray(-2)).toEqual(Buffer.from(split))
+  })
+
+  test("records rejected answers and their headers", async () => {
+    const directory = await temporaryDirectory()
+    const recordPath = join(directory, "records.jsonl")
+    const handler = bridge({ recordPath })
+    expect(
+      (await handler(post(textRequest(), { token: "wrong" }))).status,
+    ).toBe(401)
+    expect((await handler(post(textRequest(), { path: "/nope" }))).status).toBe(
+      404,
+    )
+    const records = await lines(recordPath)
+    const answers = records.filter(
+      (record) => record.phase === "downstream_json",
+    )
+    expect(answers.map((record) => record.status)).toEqual([401, 404])
+    expect(JSON.parse(String(answers[0]?.body))).toMatchObject({
+      error: { code: "invalid_token" },
+    })
+    for (const record of answers)
+      expect((record.headers as JsonObject)["content-type"]).toContain(
+        "application/json",
+      )
   })
 })
 

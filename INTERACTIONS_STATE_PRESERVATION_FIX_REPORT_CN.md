@@ -2,7 +2,7 @@
 
 日期：2026-09-12。对应计划：[[INTERACTIONS_STATE_PRESERVATION_FIX_PLAN_CN.md]]。
 
-状态：代码、测试与联调脚本改动已在工作区完成，尚未提交。实弹验证为有限合成用例（见 §4）。范围仅限独立转换器 `src/services/interactions`、`tests/interactions*`、`tests/support/interactions-stream.ts`、`scripts/interactions-codex-live.ts` 与相关文档；现有业务接线（`src/routes/responses/handler.ts`、`src/lib/model-routing.ts`、`src/lib/codex-models.ts`、`codex-models.json`、`tests/codex-passthrough.test.ts`、`tests/model-routing.test.ts`）未纳入本次改动，工作区里它们的改动属于用户并发工作。
+状态：本文所述改动已在 `49ea45d fix(interactions): preserve state across Responses and Interactions conversion` 提交，随后经复核发现 SSE thought 保真与联调日志两处缺口，已由 `interactions-conversion-fidelity-rework` 看板修正，逐项证据见 [[INTERACTIONS_CONVERSION_FIDELITY_REWORK_REPORT_CN.md]]。本文其余结论保持当时口径不变。实弹验证为有限合成用例（见 §4）。范围仅限独立转换器 `src/services/interactions`、`tests/interactions*`、`tests/support/interactions-stream.ts`、`scripts/interactions-codex-live.ts` 与相关文档；现有业务接线（`src/routes/responses/handler.ts`、`src/lib/model-routing.ts`、`src/lib/codex-models.ts`、`codex-models.json`、`tests/codex-passthrough.test.ts`、`tests/model-routing.test.ts`）未纳入本次改动，工作区里它们的改动属于用户并发工作。
 
 ## 1. 结论
 
@@ -112,4 +112,4 @@
 
 修改：`src/services/interactions/convert.ts`、`src/services/interactions/stream.ts`、`scripts/interactions-codex-live.ts`、`tests/interactions-convert.test.ts`、`tests/interactions-stream.test.ts`、`tests/interactions-round-trip.test.ts`、`tests/interactions-cli-request.test.ts`、`tests/interactions-bridge.test.ts`、`GEMINI_INTERACTIONS_V1_CODEX_CLI_TEST_PLAN_CN.md`、`GEMINI_INTERACTIONS_V1_CODEX_CLI_TEST_REPORT_CN.md`、`INTERACTIONS_STATE_PRESERVATION_FIX_PLAN_CN.md`。
 
-后续：由 `commit_state_preservation_fixes` 任务在当前分支提交上述范围内的文件，不带上工作区里用户并发修改的 6 个文件。
+后续：上述文件已由 `commit_state_preservation_fixes` 任务提交为 `49ea45d`，未带入工作区里用户并发修改的 6 个文件。其后的保真返工见 [[INTERACTIONS_CONVERSION_FIDELITY_REWORK_REPORT_CN.md]]。
