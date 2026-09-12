@@ -8,10 +8,13 @@ const CODEX_AUTH_DIR = path.join(APP_DIR, "codex")
 
 const GITHUB_TOKEN_PATH = path.join(APP_DIR, "github_token")
 
+const REQUEST_LOG_PATH = path.join(APP_DIR, "requests.log")
+
 export const PATHS = {
   APP_DIR,
   CODEX_AUTH_DIR,
   GITHUB_TOKEN_PATH,
+  REQUEST_LOG_PATH,
 }
 
 export async function ensurePaths(): Promise<void> {

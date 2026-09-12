@@ -22,8 +22,9 @@ import {
   findUnconfiguredCodexModels,
   type PublishedModels,
 } from "./lib/model-sources"
-import { ensureCodexAuthDir, ensurePaths } from "./lib/paths"
+import { ensureCodexAuthDir, ensurePaths, PATHS } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
+import { setRequestLogFile } from "./lib/request-log"
 import { loadRuntimeConfig, type RuntimeConfig } from "./lib/runtime-config"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
@@ -209,6 +210,9 @@ async function publishModels(
 
 export async function runServer(options: RunServerOptions): Promise<void> {
   state.verbose = options.verbose
+
+  setRequestLogFile(PATHS.REQUEST_LOG_PATH)
+  consola.info(`Incoming requests are appended to ${PATHS.REQUEST_LOG_PATH}`)
 
   if (options.proxyEnv) {
     initProxyFromEnv()

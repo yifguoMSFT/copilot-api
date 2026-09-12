@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 
+import { recordIncomingRequest } from "./lib/request-log"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { messageRoutes } from "./routes/messages/route"
@@ -12,6 +13,32 @@ import { usageRoute } from "./routes/usage/route"
 export const server = new Hono()
 
 server.use(cors())
+
+const readBodyForLog = async (
+  request: Request,
+): Promise<string | undefined> => {
+  if (request.body === null) return undefined
+  try {
+    return await request.clone().text()
+  } catch {
+    // A body the runtime refuses to clone stays unlogged; the request itself
+    // must still reach its route unchanged.
+    return undefined
+  }
+}
+
+/**
+ * Records every request the gateway receives before any route can reject it,
+ * so a client that never reaches a handler is still visible in the log.
+ */
+server.use(async (c, next) => {
+  recordIncomingRequest({
+    bodyText: await readBodyForLog(c.req.raw),
+    method: c.req.method,
+    path: c.req.path,
+  })
+  await next()
+})
 
 server.get("/", (c) => c.text("Server running"))
 
