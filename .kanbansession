@@ -1,3 +1,10 @@
 {
-  "sessions": {}
+  "sessions": {
+    "01a0939a-6997-7291-851e-f6d25aed593b": {
+      "blueprint_path": "I:\\Cache\\workshop\\copilot-api\\gemini-interactions-v1-codex-cli-test.kanban.json",
+      "last_execution_fingerprint": "bd6c67b689ba80fac258613278e721028fc54ccc79316f13a2ab316b511591d5",
+      "registration_id": "1789195400741314600",
+      "unchanged_stop_count": 0
+    }
+  }
 }
