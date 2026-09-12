@@ -18,7 +18,10 @@ const parseEvents = (value: string): Array<JsonObject> =>
     .map((frame) => JSON.parse(frame.split("\ndata: ")[1]) as JsonObject)
 const options = {
   requestedModel: "client-alias",
-  customTools: new Set(["patch"]),
+  tools: new Map([
+    ["weather", { name: "weather", custom: false }],
+    ["patch", { name: "patch", custom: true }],
+  ]),
 }
 const baseRequest = {
   model: "client-alias",
@@ -139,13 +142,22 @@ describe("Offline converter round trips", () => {
   })
 
   test("interleaved instances and caller mutation do not share buffers or tool names", () => {
-    const custom = new Set(["patch"])
+    const tools = new Map([
+      ["weather", { name: "weather", custom: false }],
+      ["patch", { name: "patch", custom: true }],
+    ])
     const a = createInteractionsEventStream({
       requestedModel: "a",
-      customTools: custom,
+      tools,
     })
-    const b = createInteractionsEventStream({ requestedModel: "b" })
-    custom.clear()
+    const b = createInteractionsEventStream({
+      requestedModel: "b",
+      tools: new Map([
+        ["weather", { name: "weather", custom: false }],
+        ["patch", { name: "patch", custom: false }],
+      ]),
+    })
+    tools.clear()
     let outputA = ""
     let outputB = ""
     for (const event of fixture.events) {
@@ -231,7 +243,10 @@ describe("Terminal status parity", () => {
       status: "completed",
       steps: [partial],
     }
-    const stream = createInteractionsEventStream(options)
+    // The item id scope is pinned so both directions can be compared; without
+    // an upstream id each response otherwise gets its own unique scope.
+    const pinned = { ...options, itemIdScope: "pinned" }
+    const stream = createInteractionsEventStream(pinned)
     let wire = ""
     for (const event of [
       {
@@ -244,7 +259,7 @@ describe("Terminal status parity", () => {
     ])
       wire += stream.push(encode(event))
     wire += stream.flush()
-    const json = convertInteractionsResponseToResponses(interaction, options)
+    const json = convertInteractionsResponseToResponses(interaction, pinned)
     expect(json.id).toBe("")
     expect(parseEvents(wire).at(-1)?.response).toEqual(json)
   })

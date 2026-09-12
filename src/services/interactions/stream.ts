@@ -7,8 +7,11 @@ import {
   InteractionsConversionError,
   type JsonObject,
   MAX_DATA_BYTES,
+  nextResponseScope,
   object,
   parseArguments,
+  responseItemId,
+  responsesUsage,
   string,
 } from "./convert"
 
@@ -48,7 +51,7 @@ export class InteractionsEventStream {
   private readonly options: ConversionOptions & { requestedModel: string }
 
   constructor(options: ConversionOptions & { requestedModel: string }) {
-    this.options = { ...options, customTools: new Set(options.customTools) }
+    this.options = { ...options, tools: new Map(options.tools) }
     this.interaction = {
       id: "",
       model: options.requestedModel,
@@ -144,7 +147,9 @@ export class InteractionsEventStream {
         ...object(event.interaction),
         status: "in_progress",
       }
-      string(this.interaction.id)
+      const interactionId = string(this.interaction.id)
+      // One scope per response keeps generated item ids from repeating.
+      this.options.itemIdScope ??= nextResponseScope(interactionId)
       this.started = true
       const response = this.envelope("in_progress")
       this.emit("response.created", { response })
@@ -310,7 +315,10 @@ export class InteractionsEventStream {
   }
 
   private coordinates(state: StepState): JsonObject {
-    return { item_id: `step_${state.index}`, output_index: state.outputIndex }
+    return {
+      item_id: responseItemId(this.options.itemIdScope, state.index),
+      output_index: state.outputIndex,
+    }
   }
 
   private addPart(state: StepState, text: string): void {
@@ -462,10 +470,33 @@ export class InteractionsEventStream {
       throw new InteractionsConversionError("Terminal steps mismatch")
     for (const [index, step] of value.entries()) {
       const state = this.state(index)
-      if (!isDeepStrictEqual(this.materialize(state), step))
-        throw new InteractionsConversionError(
-          "Terminal content differs from stream",
+      const terminal = object(step)
+      const streamed = this.materialize(state)
+      // The terminal snapshot may omit optional fields the stream already
+      // sent, and it may fill in a signature that arrived only with it. Only a
+      // genuine disagreement about what was already streamed is an error.
+      if (terminal.signature !== undefined) {
+        const signature = string(terminal.signature)
+        if (
+          streamed.signature !== undefined
+          && !isDeepStrictEqual(streamed.signature, signature)
         )
+          throw new InteractionsConversionError(
+            "Terminal content differs from stream",
+          )
+        state.step.signature = signature
+      }
+      for (const [key, received] of Object.entries(streamed)) {
+        const final = terminal[key]
+        if (
+          key !== "signature"
+          && final !== undefined
+          && !isDeepStrictEqual(received, final)
+        )
+          throw new InteractionsConversionError(
+            "Terminal content differs from stream",
+          )
+      }
     }
   }
 
@@ -492,44 +523,20 @@ export class InteractionsEventStream {
     if (usage !== undefined) this.retainedUsage = usage
   }
 
-  private finishPartial(state: StepState): void {
-    const thought = state.step.type === "thought"
-    const item: JsonObject =
-      thought ?
-        {
-          type: "reasoning",
-          id: `step_${state.index}`,
-          summary: state.parts.map((text) => ({ type: "summary_text", text })),
-        }
-      : {
-          type: "message",
-          id: `step_${state.index}`,
-          role: "assistant",
-          status: "incomplete",
-          content: state.parts.map((text) => ({
-            type: "output_text",
-            text,
-            annotations: [],
-          })),
-        }
-    this.finishParts(state)
-    this.emit("response.output_item.done", {
-      output_index: state.outputIndex,
-      item,
-    })
-    state.item = item
-    state.done = true
-  }
-
   private fail(error: unknown): void {
     if (this.terminal) return
     const details =
       error instanceof Error ?
         { code: "conversion_error", message: error.message }
       : object(error)
+    if (
+      this.interaction.usage === undefined
+      && this.retainedUsage !== undefined
+    )
+      this.interaction.usage = this.retainedUsage
     for (const state of this.steps.values()) {
       if (!state.done && state.step.type !== "function_call")
-        this.finishPartial(state)
+        this.finishStep(state, true)
     }
     const partial = [...this.steps.values()].flatMap((state) =>
       state.item === undefined ? [] : [state.item],
@@ -546,7 +553,7 @@ export class InteractionsEventStream {
           code: details.code ?? "upstream_error",
           message: details.message ?? "Interaction failed",
         },
-        usage: null,
+        usage: responsesUsage(this.interaction.usage),
       },
     })
     this.terminal = true
@@ -565,6 +572,6 @@ export function createInteractionsEventStream(
 ): InteractionsEventStream {
   return new InteractionsEventStream({
     ...options,
-    customTools: new Set(options.customTools),
+    tools: new Map(options.tools),
   })
 }

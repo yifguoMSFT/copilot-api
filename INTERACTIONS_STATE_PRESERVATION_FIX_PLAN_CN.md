@@ -1,8 +1,8 @@
 # Responses ↔ Interactions 状态保留修正计划
 
-日期：2026-09-12。状态：代码审核与待实施计划。
+日期：2026-09-12。状态：已实施（同日完成，逐项结果与实弹证据见 [[INTERACTIONS_STATE_PRESERVATION_FIX_REPORT_CN.md]]）。下文保留修复前的问题描述作为历史事实，标题下的“报告项”指向该报告中的对应小节。
 
-结论：当前转换器不能称为“完美转换了两个有状态协议”。已有实测证明了部分文本、function 工具和完整历史续轮能够工作，但没有证明所有会话状态无损。尤其不能把 CLI 能复述标记、缓存计数映射相等，当成完整 stateful 兼容的证据。
+结论（修复前的历史结论）：当时转换器不能称为“完美转换了两个有状态协议”。已有实测证明了部分文本、function 工具和完整历史续轮能够工作，但没有证明所有会话状态无损。尤其不能把 CLI 能复述标记、缓存计数映射相等，当成完整 stateful 兼容的证据。
 
 本计划只修正独立转换器及其测试；完整记录的修改放在独立联调脚本。保持纯函数和单次响应内的流状态，不增加数据库、会话仓库、服务端历史查询或现有业务路由接线。不含图片、多媒体和 WebSocket。
 
@@ -24,6 +24,8 @@
 
 ### P1：服务端引用模式不完整，不能静默丢失会话选择
 
+报告项：[[INTERACTIONS_STATE_PRESERVATION_FIX_REPORT_CN.md]] §3.1。状态：已保留 + 无等价项明确拒绝。
+
 位置：`src/services/interactions/convert.ts` 的 requestSchema、请求转换和响应转换。
 
 - previous_response_id → previous_interaction_id 已有映射，store 已有映射。
@@ -36,6 +38,8 @@
 
 ### P1：失败流会丢弃已经收到的 thought 签名
 
+报告项：报告 §3.2。状态：已保留（离线替身验证）。
+
 位置：`src/services/interactions/stream.ts` 的 finishPartial、fail、complete、verifySnapshot。
 
 正常结束会输出 agdata1 封装；fail 路径的 finishPartial 只返回 summary，不携带已经收到的 signature。fail 还直接把 usage 设为 null。严格比较终态 snapshot 与流累积值，也可能把终态补齐的可选数据当成冲突，而不是接受补全。
@@ -45,6 +49,8 @@
 验收：签名后断流、签名后 error、summary 后无签名断流、仅终态补签名、终态省略可选字段、终态文本矛盾、失败前有 usage。逐项检查最终 output，而不只检查出现 response.failed。
 
 ### P1：消息和 item 身份不是无损映射
+
+报告项：报告 §3.3。状态：已保留可映射部分，`phase`/`status` 列为无等价。
 
 位置：convert.ts 的 historyItem、messageText、convertInteractionStep；stream.ts 的 coordinates。
 
@@ -56,6 +62,8 @@
 
 ### P2：工具名称编码和恢复依赖当前请求
 
+报告项：报告 §3.4。状态：已实现，长度前缀编码 + 显式身份表，无全局注册表。
+
 位置：convert.ts 的 qualifiedToolName、flattenTools、toolResult 及 ConversionOptions。
 
 namespace__name 拼接不是单射，例如 namespace=a__b/name=c 与 namespace=a/name=b__c 会碰撞；还可能与普通函数名碰撞。反向恢复依赖当前请求的 toolNamespaces/customTools，不能默认父引用续轮必然重新声明全部工具。
@@ -65,6 +73,8 @@ namespace__name 拼接不是单射，例如 namespace=a__b/name=c 与 namespace=
 验收：分隔符碰撞、普通名称碰撞、custom 与 namespace 组合、并行多个 call_id、父引用续轮工具声明缺省、重启后使用客户端提供上下文恢复。参数按 JSON 值等价验收，不宣称 JSON 空白和键顺序逐字节不变。
 
 ### P2：thought 排序和回放边界需要更强证据
+
+报告项：报告 §3.5。状态：已实现最小重排与完整对象回放。
 
 位置：convert.ts 的 leadWithThoughts、thoughtSchema、decodeThought。
 
@@ -76,6 +86,8 @@ namespace__name 拼接不是单射，例如 namespace=a__b/name=c 与 namespace=
 
 ### P2：session 元数据在桥接层没有实际保留到记录
 
+报告项：报告 §3.6。状态：已保留为调用方上下文；不宣称上游消费。
+
 位置：convert.ts 返回的 metadata；`scripts/interactions-codex-live.ts` 的 respond。
 
 转换器返回 session-id/prompt_cache_key 元数据，但桥接只使用 body/customTools/toolNamespaces，未记录 converted.metadata；client_metadata 被转换 schema 丢弃。不能声称 session 信息已被 Google 消费。
@@ -85,6 +97,8 @@ namespace__name 拼接不是单射，例如 namespace=a__b/name=c 与 namespace=
 验收：session-id、prompt_cache_key、client_metadata 在日志原值可见；转换前后输入不被修改；交错请求可按请求标识关联；缓存计数仅映射上游原值。
 
 ## 3. 完整本地记录：删除全部脱敏和摘要替换
+
+报告项：报告 §3.7。状态：已完成。
 
 用户已明确要求个人本地使用，记录必须完整保留。修改仅针对本转换器联调链路，不扩散到项目其他业务。
 

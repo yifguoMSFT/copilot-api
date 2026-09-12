@@ -12,23 +12,55 @@ export class InteractionsConversionError extends Error {
 export const MAX_DATA_BYTES = 1_048_576
 /**
  * Functions cannot be grouped upstream, so a Responses namespace tool group is
- * flattened into one Function per nested tool. The qualified name is reversed
- * on the way back using the namespaces declared by the same request.
+ * flattened into one Function per nested tool. The namespace length keeps the
+ * flattened name unambiguous, so two different namespace/name pairs never
+ * produce one name. The leading underscore keeps the result inside the
+ * documented function-name rule for the upstream APIs (a letter or underscore
+ * first, then letters, digits, underscores and dashes). Reversing it never
+ * parses the name: it uses the tool context the caller passes in.
  */
-export const NAMESPACE_SEPARATOR = "__"
-
 export function qualifiedToolName(namespace: string, name: string): string {
-  return `${namespace}${NAMESPACE_SEPARATOR}${name}`
+  return `_${namespace.length}_${namespace}${name}`
+}
+
+/** Everything needed to restore one function call the client declared. */
+export interface ToolIdentity {
+  /** Function name the client declared, without any namespace. */
+  name: string
+  /** Responses namespace the function was flattened from, if any. */
+  namespace?: string
+  /** Whether the declared tool was a Responses custom tool. */
+  custom: boolean
+}
+
+/**
+ * Item id scoped to one response. The scope keeps ids from repeating between
+ * responses while every item of one response stays stable.
+ */
+export function responseItemId(
+  scope: string | undefined,
+  index: number,
+): string {
+  return `${scope ?? "step"}_${index}`
 }
 
 const textContent = z.strictObject({
   type: z.literal("text"),
   text: z.string(),
 })
-const thoughtSchema = z.strictObject({
+/**
+ * A thought is replayed verbatim, so its schema checks the fields this
+ * converter reads and keeps every other upstream field instead of rejecting
+ * the step. Only the type of the fields used here is enforced.
+ */
+const thoughtText = z.looseObject({
+  type: z.literal("text"),
+  text: z.string(),
+})
+const thoughtSchema = z.looseObject({
   type: z.literal("thought"),
   signature: z.string().optional(),
-  summary: z.array(textContent).optional(),
+  summary: z.array(thoughtText).optional(),
 })
 const requestSchema = z.object({
   model: z.string().min(1),
@@ -36,7 +68,10 @@ const requestSchema = z.object({
   instructions: z.string().optional(),
   stream: z.boolean().optional(),
   store: z.boolean().optional(),
-  previous_response_id: z.string().min(1).nullable().optional(),
+  previous_response_id: z.string().nullable().optional(),
+  // Declared only so a persistent conversation is rejected instead of being
+  // silently stripped, which would drop the context it selects.
+  conversation: z.unknown().optional(),
   max_output_tokens: z.number().int().positive().optional(),
   tools: z.array(z.record(z.string(), z.unknown())).optional(),
   tool_choice: z.unknown().optional(),
@@ -60,11 +95,38 @@ const requestSchema = z.object({
 export interface ConversionOptions {
   upstreamModel?: string
   requestedModel?: string
-  customTools?: ReadonlySet<string>
-  /** Upstream Function name to the Responses namespace it was flattened from. */
-  toolNamespaces?: ReadonlyMap<string, string>
-  metadata?: Readonly<Record<string, string>>
+  /**
+   * Tool identities declared by the request, keyed by upstream function name.
+   * A call that is not listed is refused instead of guessed: Interactions
+   * cannot express a namespace or a custom tool, so the name alone is not
+   * enough to restore what the client declared.
+   */
+  tools?: ReadonlyMap<string, ToolIdentity>
+  /**
+   * Caller context kept beside the request. It is never written into the
+   * upstream body, because Interactions has no field with this meaning.
+   */
+  metadata?: Readonly<Record<string, unknown>>
   createdAt?: number
+  /**
+   * Scope of the generated item ids. Callers that convert the same response
+   * twice can pin it; otherwise each response gets its own scope.
+   */
+  itemIdScope?: string
+}
+
+let responseSequence = 0
+
+/**
+ * Item ids must not repeat between responses, but Interactions carries no item
+ * id for messages and thoughts. The upstream interaction id is unique when it
+ * exists; live v1 responses may omit it, so a process-local sequence keeps
+ * consecutive responses independent without storing any conversation state.
+ */
+export function nextResponseScope(interactionId: string): string {
+  if (interactionId !== "") return interactionId
+  responseSequence += 1
+  return `response_${responseSequence.toString(36)}`
 }
 
 export function object(value: unknown): JsonObject {
@@ -102,8 +164,9 @@ export function parseArguments(value: string): JsonObject {
   }
 }
 
-function messageText(content: unknown): string {
-  if (typeof content === "string") return content
+/** Text of each Responses content block, in order; a string is one block. */
+function messageTexts(content: unknown): Array<string> {
+  if (typeof content === "string") return [content]
   return parse(
     z.array(
       z.object({
@@ -112,9 +175,11 @@ function messageText(content: unknown): string {
       }),
     ),
     content,
-  )
-    .map((part) => part.text)
-    .join("")
+  ).map((part) => part.text)
+}
+
+function messageText(content: unknown): string {
+  return messageTexts(content).join("")
 }
 
 function toolDefinition(tool: JsonObject): JsonObject {
@@ -252,8 +317,14 @@ function historyItem(
     case "message": {
       const role = parse(z.enum(["user", "assistant"]), item.role)
       return {
+        // One text block per Responses content block. Responses-only fields
+        // (phase, status, item id) have no Interactions equivalent and are
+        // dropped rather than folded into the text.
         type: role === "user" ? "user_input" : "model_output",
-        content: [{ type: "text", text: messageText(item.content) }],
+        content: messageTexts(item.content).map((text) => ({
+          type: "text",
+          text,
+        })),
       }
     }
     case "function_call":
@@ -279,6 +350,12 @@ function historyItem(
     case "reasoning": {
       return decodeThought(item.encrypted_content)
     }
+    case "item_reference":
+    case "compaction": {
+      throw new InteractionsConversionError(
+        `${item.type} has no Interactions equivalent`,
+      )
+    }
     default: {
       throw new InteractionsConversionError(
         `Unsupported input: ${String(item.type)}`,
@@ -294,6 +371,12 @@ const MODEL_TURN_STEPS = new Set(["model_output", "function_call", "thought"])
  * ("Model turns with thought summaries must start with a thought block").
  * Codex appends the reasoning item after the message and tool calls it
  * produced, so each model turn is emitted with its thought blocks first.
+ *
+ * A turn runs between the explicit boundaries the client sent: user input and
+ * tool results (the only non-model steps this converter emits). The only
+ * adjustment inside a turn is lifting its thought blocks ahead of the rest;
+ * the relative order of the thoughts and of the remaining steps is unchanged,
+ * so nothing else about the client's history is rewritten.
  */
 function leadWithThoughts(steps: Array<JsonObject>): Array<JsonObject> {
   const ordered: Array<JsonObject> = []
@@ -343,15 +426,13 @@ function history(
 
 interface FlattenedTools {
   definitions: Array<JsonObject>
-  custom: Set<string>
-  namespaces: Map<string, string>
+  tools: Map<string, ToolIdentity>
 }
 
 function flattenTools(tools: ReadonlyArray<JsonObject>): FlattenedTools {
   const result: FlattenedTools = {
     definitions: [],
-    custom: new Set(),
-    namespaces: new Map(),
+    tools: new Map(),
   }
   for (const tool of tools) {
     if (tool.type === "namespace") {
@@ -361,20 +442,47 @@ function flattenTools(tools: ReadonlyArray<JsonObject>): FlattenedTools {
         tool.tools,
       )
       for (const child of nested) {
-        const name = qualifiedToolName(
+        const name = parse(z.string().min(1), child.name)
+        const upstream = qualifiedToolName(namespace, name)
+        if (result.tools.has(upstream))
+          throw new InteractionsConversionError("Duplicate tool name")
+        result.definitions.push(toolDefinition({ ...child, name: upstream }))
+        result.tools.set(upstream, {
+          name,
           namespace,
-          parse(z.string().min(1), child.name),
-        )
-        result.definitions.push(toolDefinition({ ...child, name }))
-        result.namespaces.set(name, namespace)
-        if (child.type === "custom") result.custom.add(name)
+          custom: child.type === "custom",
+        })
       }
       continue
     }
+    const name = parse(z.string().min(1), tool.name)
+    if (result.tools.has(name))
+      throw new InteractionsConversionError("Duplicate tool name")
     result.definitions.push(toolDefinition(tool))
-    if (tool.type === "custom") result.custom.add(string(tool.name))
+    result.tools.set(name, { name, custom: tool.type === "custom" })
   }
   return result
+}
+
+/**
+ * Resolves the continuation reference. A persistent conversation selects
+ * server-side context that Interactions cannot address, and a blank id cannot
+ * resolve an interaction, so both are refused instead of silently changing the
+ * request.
+ */
+function continuationParentId(
+  request: z.infer<typeof requestSchema>,
+): string | undefined {
+  if (request.conversation !== undefined && request.conversation !== null)
+    throw new InteractionsConversionError(
+      "conversation has no Interactions equivalent; pass the full history or previous_response_id",
+    )
+  const parentId = request.previous_response_id ?? undefined
+  if (parentId !== undefined && parentId.trim() === "")
+    throw new InteractionsConversionError(
+      "previous_response_id must be a non-empty interaction id",
+    )
+  return parentId
 }
 
 export function convertResponsesRequestToInteractions(
@@ -382,16 +490,15 @@ export function convertResponsesRequestToInteractions(
   options: ConversionOptions = {},
 ): {
   body: JsonObject
-  metadata: Record<string, string>
-  customTools: Set<string>
-  toolNamespaces: Map<string, string>
+  metadata: Record<string, unknown>
+  tools: Map<string, ToolIdentity>
 } {
   const request = parse(requestSchema, value)
   if (request.parallel_tool_calls === false)
     throw new InteractionsConversionError(
       "parallel_tool_calls=false has no Interactions equivalent",
     )
-  const parentId = request.previous_response_id ?? undefined
+  const parentId = continuationParentId(request)
   const { steps, system } = history(
     request.input,
     request.instructions,
@@ -399,9 +506,7 @@ export function convertResponsesRequestToInteractions(
   )
   const flattened = flattenTools(request.tools ?? [])
   const tools = flattened.definitions
-  const names = new Set(tools.map((tool) => string(tool.name)))
-  if (names.size !== tools.length)
-    throw new InteractionsConversionError("Duplicate tool name")
+  const names = new Set(flattened.tools.keys())
   const body: JsonObject = {
     model: parse(z.string().min(1), options.upstreamModel ?? request.model),
     input: steps,
@@ -413,7 +518,7 @@ export function convertResponsesRequestToInteractions(
   if (request.tools !== undefined) body.tools = tools
   const generation = generationConfig(request, names)
   if (Object.keys(generation).length > 0) body.generation_config = generation
-  const metadata = { ...options.metadata }
+  const metadata: Record<string, unknown> = { ...options.metadata }
   if (request.prompt_cache_key !== undefined) {
     if (
       "prompt_cache_key" in metadata
@@ -423,11 +528,14 @@ export function convertResponsesRequestToInteractions(
     }
     metadata.prompt_cache_key = request.prompt_cache_key
   }
+  // The payload's own client metadata has no Interactions counterpart, so it
+  // stays caller context and is copied rather than aliased to the input.
+  if (request.client_metadata !== undefined)
+    metadata.client_metadata = structuredClone(request.client_metadata)
   return {
     body,
     metadata,
-    customTools: flattened.custom,
-    toolNamespaces: flattened.namespaces,
+    tools: flattened.tools,
   }
 }
 
@@ -436,7 +544,7 @@ export function convertInteractionStep(
   index: number,
   options: ConversionOptions = {},
 ): JsonObject | undefined {
-  const id = `step_${index}`
+  const id = responseItemId(options.itemIdScope, index)
   switch (step.type) {
     case "user_input":
     case "function_result": {
@@ -460,20 +568,25 @@ export function convertInteractionStep(
     case "function_call": {
       const callId = parse(z.string().min(1), step.id)
       const upstream = parse(z.string().min(1), step.name)
-      const namespace = options.toolNamespaces?.get(upstream)
-      const name =
-        namespace === undefined ? upstream : (
-          upstream.slice(namespace.length + NAMESPACE_SEPARATOR.length)
+      const identity = options.tools?.get(upstream)
+      // Neither a namespace nor a custom tool is expressible upstream, so the
+      // declared context is required; a name is never re-interpreted.
+      if (identity === undefined)
+        throw new InteractionsConversionError(
+          `Tool call ${upstream} is not in the declared tools`,
         )
-      const grouped = namespace === undefined ? {} : { namespace }
+      const grouped =
+        identity.namespace === undefined ?
+          {}
+        : { namespace: identity.namespace }
       const args = object(step.arguments)
-      if (options.customTools?.has(upstream)) {
+      if (identity.custom) {
         const custom = parse(z.object({ input: z.string() }), args)
         return {
           type: "custom_tool_call",
           id,
           call_id: callId,
-          name,
+          name: identity.name,
           ...grouped,
           input: custom.input,
           status: "completed",
@@ -483,7 +596,7 @@ export function convertInteractionStep(
         type: "function_call",
         id,
         call_id: callId,
-        name,
+        name: identity.name,
         ...grouped,
         arguments: JSON.stringify(args),
         status: "completed",
@@ -491,16 +604,22 @@ export function convertInteractionStep(
     }
     case "thought": {
       const thought = parse(thoughtSchema, step)
-      const payload = JSON.stringify(thought)
-      if (Buffer.byteLength(payload) > MAX_DATA_BYTES)
-        throw new InteractionsConversionError("Thought exceeds replay limit")
-      return {
+      const item: JsonObject = {
         type: "reasoning",
         id,
         summary: (thought.summary ?? []).map((part) => ({
           type: "summary_text",
           text: part.text,
         })),
+      }
+      // Only a signed thought is replayable; a summary-only fragment keeps its
+      // text but must not be wrapped into a replay envelope.
+      if (thought.signature === undefined) return item
+      const payload = JSON.stringify(thought)
+      if (Buffer.byteLength(payload) > MAX_DATA_BYTES)
+        throw new InteractionsConversionError("Thought exceeds replay limit")
+      return {
+        ...item,
         encrypted_content: `agdata1.${Buffer.from(payload).toString("base64url")}`,
       }
     }
@@ -512,7 +631,8 @@ export function convertInteractionStep(
   }
 }
 
-function usage(value: unknown): JsonObject | null {
+/** Maps upstream v1 counters onto the Responses usage shape. */
+export function responsesUsage(value: unknown): JsonObject | null {
   if (value === null || value === undefined) return null
   const source = object(value)
   const count = (key: string): number | undefined =>
@@ -583,8 +703,15 @@ export function convertInteractionsResponseToResponses(
     z.array(z.record(z.string(), z.unknown())),
     interaction.steps ?? [],
   )
+  // Live v1 JSON responses omit id entirely; the SSE path reports an empty id
+  // in that case, so both directions stay consistent.
+  const responseId = interaction.id === undefined ? "" : string(interaction.id)
+  const itemOptions: ConversionOptions = {
+    ...options,
+    itemIdScope: options.itemIdScope ?? nextResponseScope(responseId),
+  }
   const output = steps.flatMap((step, index) => {
-    const item = convertInteractionStep(step, index, options)
+    const item = convertInteractionStep(step, index, itemOptions)
     return item === undefined ? [] : [item]
   })
   const created =
@@ -594,9 +721,7 @@ export function convertInteractionsResponseToResponses(
   if (created !== undefined && !Number.isFinite(created))
     throw new InteractionsConversionError("Invalid created timestamp")
   return {
-    // Live v1 JSON responses omit id entirely; the SSE path already reports an
-    // empty id in that case, so both directions stay consistent.
-    id: interaction.id === undefined ? "" : string(interaction.id),
+    id: responseId,
     object: "response",
     created_at:
       created === undefined ?
@@ -610,7 +735,7 @@ export function convertInteractionsResponseToResponses(
     // Responses enum accepts only max_output_tokens, max_messages,
     // content_filter or steered. Report incompleteness through status alone.
     incomplete_details: null,
-    usage: usage(interaction.usage),
+    usage: responsesUsage(interaction.usage),
   }
 }
 

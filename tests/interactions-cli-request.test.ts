@@ -4,7 +4,6 @@ import {
   convertInteractionsResponseToResponses as response,
   convertResponsesRequestToInteractions as request,
   type JsonObject,
-  NAMESPACE_SEPARATOR,
 } from "../src/services/interactions/convert"
 import cliRequest from "./fixtures/interactions/codex-cli-request.json"
 
@@ -25,7 +24,7 @@ describe("Codex CLI request contract", () => {
     expect(converted.body.store).toBe(false)
     expect(converted.body).not.toHaveProperty("client_metadata")
     expect(converted.body).not.toHaveProperty("parallel_tool_calls")
-    expect(converted.toolNamespaces.size).toBe(23)
+    expect(converted.tools.size).toBe(33)
     expect(converted.body.generation_config).toEqual({
       tool_choice: "auto",
       thinking_level: "low",
@@ -37,10 +36,13 @@ describe("Codex CLI request contract", () => {
     const converted = request(cliRequest)
     const options = {
       requestedModel: "gemini-3.8-flash",
-      toolNamespaces: converted.toolNamespaces,
-      customTools: converted.customTools,
+      tools: converted.tools,
     }
-    for (const [upstream, namespace] of converted.toolNamespaces) {
+    const namespaced = [...converted.tools].filter(
+      ([, identity]) => identity.namespace !== undefined,
+    )
+    expect(namespaced).toHaveLength(23)
+    for (const [upstream, identity] of namespaced) {
       const output = response(
         {
           id: "v1",
@@ -57,10 +59,8 @@ describe("Codex CLI request contract", () => {
         },
         options,
       ).output as Array<JsonObject>
-      expect(output[0]?.namespace).toBe(namespace)
-      expect(output[0]?.name).toBe(
-        upstream.slice(namespace.length + NAMESPACE_SEPARATOR.length),
-      )
+      expect(output[0]?.namespace).toBe(identity.namespace)
+      expect(output[0]?.name).toBe(identity.name)
     }
   })
 })

@@ -89,7 +89,7 @@ CLI 侧数值取自 `codex exec --json` 的 `turn.completed.usage`，因此是**
 - **`previous_response_id` 增量模式**：只验证了 `store=false` 的完整历史模式。
 - **缓存命中**：3 次均 0，未取得非零命中；非零映射由离线用例覆盖。
 - **CLI 模型元数据**：CLI 报 `Model metadata for gemini-3.8-flash not found. Defaulting to fallback metadata`，属 CLI 侧提示，不影响本轮结论。
-- **本地约定而非规范**：namespace 工具组展开为 `namespace__name`、`client_metadata` 不上送、`parallel_tool_calls=false` 显式拒绝。
+- **本地约定而非规范**：namespace 工具组展开为 `namespace__name`（后续 state-preservation 修复改为可逆的 `_<namespace 长度>_<namespace><name>`）、`client_metadata` 不上送、`parallel_tool_calls=false` 显式拒绝。
 - 本测试使用 Google 模型 endpoint，与 Antigravity 登录/endpoint 无关。
 
 ## 清理

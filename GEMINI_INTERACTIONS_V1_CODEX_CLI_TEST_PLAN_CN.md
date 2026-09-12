@@ -21,7 +21,7 @@ Codex CLI → HTTP POST http://127.0.0.1:4830/v1/responses → 现有转换函�
 - 用户配置通常是 C:/Users/Jeff/.codex/config.toml；执行前检查实际 CODEX_HOME，若已设置则使用其 config.toml，不覆盖 CODEX_HOME。
 - 新版官方参考明确：项目级 .codex/config.toml 不接受 provider 配置，provider 应放用户级配置。
 - v1 官方 REST 示例使用 /v1/interactions 和 x-goog-api-key。
-- 页面 banner 明确给出 gemini-3.8-flash，但枚举与示例存在滞后；第一步必须用该模型做最小请求。失败记录原始 HTTP 状态和脱敏诊断，不换成 3.6、3.7 或 v1beta。
+- 页面 banner 明确给出 gemini-3.8-flash，但枚举与示例存在滞后；第一步必须用该模型做最小请求。失败记录原始 HTTP 状态和完整诊断，不换成 3.6、3.7 或 v1beta。
 - 当前没有可供调用的桥接服务；以下脚本名、配置与命令是待实现方案，不是现成功能。
 
 ## 本地密钥文件
@@ -41,7 +41,7 @@ Codex CLI → HTTP POST http://127.0.0.1:4830/v1/responses → 现有转换函�
 
 桥接只按顶层字段 `gemini_api_key` 取值，使用普通属性访问，不做路径间接跳转或点分字段解析。缺文件、非 JSON、缺字段、空串或 placeholder 必须在监听及出网前失败。
 
-Gemini key 仅由桥接进程读取并注入 x-goog-api-key。不得写入 Markdown、Codex config.toml、命令行参数、URL 或日志。不要把项目现有 deepseek.apiKey 当 Gemini key。脚本不调用现有 runtime-config，因其 schema 没有 Gemini 配置。
+Gemini key 仅由桥接进程读取并注入 x-goog-api-key。不得写入 Markdown、Codex config.toml、命令行参数或 URL；本地记录文件会原样保存实际发出的请求头（含该 key），该文件只存在于版本控制之外。不要把项目现有 deepseek.apiKey 当 Gemini key。脚本不调用现有 runtime-config，因其 schema 没有 Gemini 配置。
 
 ## 独立桥接脚本
 
@@ -51,15 +51,15 @@ Gemini key 仅由桥接进程读取并注入 x-goog-api-key。不得写入 Markd
 
 1. 仅监听 127.0.0.1；处理 POST /v1/responses 和一个无敏感数据的 health 接口。其他路径明确不支持，Upgrade 不升级。
 2. 验证单独的本地临时 Bearer token；它与 Gemini key 不同，通过启动终端的 INTERACTIONS_TEST_TOKEN 环境变量供桥接器和 CLI 使用。
-3. 将请求 JSON 交给 convertResponsesRequestToInteractions。显式 upstreamModel=gemini-3.8-flash，requestedModel 回显 CLI 模型名，customTools 从当前请求转换结果传给两个响应转换方向。
+3. 将请求 JSON 交给 convertResponsesRequestToInteractions。显式 upstreamModel=gemini-3.8-flash，requestedModel 回显 CLI 模型名，返回的工具身份表（tools）从当前请求转换结果传给两个响应转换方向。
 4. Google 上游地址固定，不接受客户端提交任意 endpoint。出站头只构造 Content-Type、Accept 和 x-goog-api-key；不复制 CLI Authorization、Cookie 或 OpenAI 账号头。不跟随意外重定向携带密钥。
 5. stream=false 使用 JSON 转换；stream=true 逐字节喂给新的 InteractionsEventStream，输出 text/event-stream。正常 reader EOF 调用 flush；断开调用 cancel 并 abort fetch、取消 reader，释放资源。
 6. 设请求体上限、有限超时和流空闲超时；初轮关闭自动重试，便于定位一次请求的真实失败。
 7. 发出 SSE 前的上游 HTTP 非 2xx 返回 Responses 风格 error JSON，并保留可用 HTTP 状态；已发出 SSE 后发生失败必须输出失败终态或可辨识断流，不能补一个 completed。网络异常应有明确错误路径。
-8. 可开启脱敏记录：入站 body、转换后的 body、上游 JSON/SSE、下游 SSE、CLI JSONL。只使用合成提示与测试文件；剔除认证头、key、签名明文及任何真实个人数据。签名连续性比较在内存中完成，记录相等布尔值、长度及摘要即可。
+8. 可开启完整记录：入站与出站头、入站 body、转换后的 body 与 metadata、上游 JSON/SSE、下游 SSE、CLI JSONL，全部按收到的原值写入，不脱敏、不摘要、不截断。每条记录带请求关联 id。记录文件只在版本控制之外，入库 fixture 才需要精简脱敏。
 9. 当前请求的 session-id、prompt_cache_key 作为 metadata 传递/观测。不要声称 Google 识别 OpenAI session header，不自动塞进 labels，也不注入 prompt。不存会话历史，不建立 ID 映射表。
 
-先修复审核中的累计 usage 和 errors 数组问题；实际 CLI 请求字段若被拒绝，保留脱敏 fixture 后在转换器内最小修正。不要在桥接层维护第二套转换逻辑。
+先修复审核中的累计 usage 和 errors 数组问题；实际 CLI 请求字段若被拒绝，保留完整本地记录、把精简脱敏后的 fixture 入库，然后在转换器内最小修正。不要在桥接层维护第二套转换逻辑。
 
 ## 用户级 config.toml 新增 provider
 

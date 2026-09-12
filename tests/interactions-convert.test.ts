@@ -138,7 +138,10 @@ describe("Interactions request conversion", () => {
         { type: "custom_tool_call_output", call_id: "c", output: "ok" },
       ],
     })
-    expect(converted.customTools.has("patch")).toBe(true)
+    expect(converted.tools.get("patch")).toEqual({
+      name: "patch",
+      custom: true,
+    })
     expect(converted.body.generation_config).toEqual({
       tool_choice: { allowed_tools: { mode: "any", tools: ["patch"] } },
     })
@@ -313,13 +316,13 @@ describe("Interactions tool namespaces", () => {
     expect(converted.body.tools).toEqual([
       {
         type: "function",
-        name: "mcp__demo__lookup",
+        name: "_9_mcp__demolookup",
         description: "Look something up",
         parameters: { type: "object" },
       },
       {
         type: "function",
-        name: "mcp__demo__patch",
+        name: "_9_mcp__demopatch",
         parameters: {
           type: "object",
           properties: { input: { type: "string" } },
@@ -328,10 +331,15 @@ describe("Interactions tool namespaces", () => {
         },
       },
     ])
-    expect(converted.customTools).toEqual(new Set(["mcp__demo__patch"]))
-    expect([...converted.toolNamespaces]).toEqual([
-      ["mcp__demo__lookup", "mcp__demo"],
-      ["mcp__demo__patch", "mcp__demo"],
+    expect([...converted.tools]).toEqual([
+      [
+        "_9_mcp__demolookup",
+        { name: "lookup", namespace: "mcp__demo", custom: false },
+      ],
+      [
+        "_9_mcp__demopatch",
+        { name: "patch", namespace: "mcp__demo", custom: true },
+      ],
     ])
   })
 
@@ -344,7 +352,7 @@ describe("Interactions tool namespaces", () => {
     })
     expect(converted.body.generation_config).toEqual({
       tool_choice: {
-        allowed_tools: { mode: "any", tools: ["mcp__demo__lookup"] },
+        allowed_tools: { mode: "any", tools: ["_9_mcp__demolookup"] },
       },
     })
     expect(() =>
@@ -364,20 +372,19 @@ describe("Interactions tool namespaces", () => {
         {
           type: "function_call",
           id: "fc_1",
-          name: "mcp__demo__lookup",
+          name: "_9_mcp__demolookup",
           arguments: { q: "x" },
         },
       ]),
       {
         requestedModel: "g",
-        customTools: converted.customTools,
-        toolNamespaces: converted.toolNamespaces,
+        tools: converted.tools,
       },
     )
     expect(called.output).toEqual([
       {
         type: "function_call",
-        id: "step_0",
+        id: "v1_original_0",
         call_id: "fc_1",
         name: "lookup",
         namespace: "mcp__demo",
@@ -394,20 +401,19 @@ describe("Interactions tool namespaces", () => {
         {
           type: "function_call",
           id: "fc_2",
-          name: "mcp__demo__patch",
+          name: "_9_mcp__demopatch",
           arguments: { input: "*** Begin Patch" },
         },
       ]),
       {
         requestedModel: "g",
-        customTools: converted.customTools,
-        toolNamespaces: converted.toolNamespaces,
+        tools: converted.tools,
       },
     )
     expect(called.output).toEqual([
       {
         type: "custom_tool_call",
-        id: "step_0",
+        id: "v1_original_0",
         call_id: "fc_2",
         name: "patch",
         namespace: "mcp__demo",
@@ -443,13 +449,13 @@ describe("Interactions tool namespaces", () => {
       {
         type: "function_call",
         id: "fc_1",
-        name: "mcp__demo__lookup",
+        name: "_9_mcp__demolookup",
         arguments: { q: "x" },
       },
       {
         type: "function_result",
         call_id: "fc_1",
-        name: "mcp__demo__lookup",
+        name: "_9_mcp__demolookup",
         result: [{ type: "text", text: "sunny" }],
       },
     ])
@@ -583,13 +589,18 @@ describe("Interactions JSON responses", () => {
         ]),
         status: "requires_action",
       },
-      { customTools: new Set(["patch"]) },
+      {
+        tools: new Map([
+          ["weather", { name: "weather", custom: false }],
+          ["patch", { name: "patch", custom: true }],
+        ]),
+      },
     )
     expect(converted.status).toBe("completed")
     expect(converted.output).toEqual([
       {
         type: "function_call",
-        id: "step_0",
+        id: "v1_original_0",
         call_id: "c1",
         name: "weather",
         arguments: '{"city":"x"}',
@@ -597,7 +608,7 @@ describe("Interactions JSON responses", () => {
       },
       {
         type: "custom_tool_call",
-        id: "step_1",
+        id: "v1_original_1",
         call_id: "c2",
         name: "patch",
         input: "raw\n",
@@ -606,7 +617,7 @@ describe("Interactions JSON responses", () => {
     ])
   })
 
-  test("replays thought data and rejects foreign or injected envelopes", () => {
+  test("replays thought data and rejects foreign or malformed envelopes", () => {
     const thought = {
       type: "thought",
       signature: "opaque",
@@ -616,8 +627,10 @@ describe("Interactions JSON responses", () => {
     expect(request({ model: "g", input: output }).body.input).toEqual([thought])
     for (const encrypted of [
       "foreign",
+      // Native OpenAI reasoning ciphertext is not a Gemini thought signature.
+      "gAAAAABm0F7mV3J9c2lnbmF0dXJl",
       "agdata1.bad+",
-      `agdata1.${Buffer.from(JSON.stringify({ ...thought, apiKey: "evil" })).toString("base64url")}`,
+      `agdata1.${Buffer.from(JSON.stringify({ type: "message" })).toString("base64url")}`,
     ]) {
       expect(() =>
         request({

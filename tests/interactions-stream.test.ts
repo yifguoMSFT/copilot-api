@@ -1,46 +1,20 @@
 import { describe, expect, test } from "bun:test"
 
 import { MAX_DATA_BYTES } from "../src/services/interactions/convert"
-import { createInteractionsEventStream } from "../src/services/interactions/stream"
-
-const encoder = new TextEncoder()
-const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`
-const created = {
-  event_type: "interaction.created",
-  interaction: { id: "v1_id", model: "gemini", status: "in_progress" },
-}
-const start = (index: number, step: unknown = { type: "model_output" }) => ({
-  event_type: "step.start",
-  index,
-  step,
-})
-const delta = (index: number, value: unknown) => ({
-  event_type: "step.delta",
-  index,
-  delta: value,
-})
-const stop = (index: number) => ({ event_type: "step.stop", index })
-const completed = {
-  event_type: "interaction.completed",
-  interaction: { id: "v1_id", status: "completed" },
-}
-const converter = () =>
-  createInteractionsEventStream({ requestedModel: "client", createdAt: 1 })
-const events = (output: string): Array<Record<string, unknown>> =>
-  output
-    .split("\n\n")
-    .filter((part) => part.startsWith("event:"))
-    .map(
-      (part) =>
-        JSON.parse(part.split("\ndata: ")[1]) as Record<string, unknown>,
-    )
-const run = (values: Array<unknown>) => {
-  const stream = converter()
-  return events(
-    stream.push(encoder.encode(values.map((value) => frame(value)).join("")))
-      + stream.flush(),
-  )
-}
+import {
+  completed,
+  converter,
+  created,
+  delta,
+  encoder,
+  events,
+  failedOutput,
+  frame,
+  replay,
+  run,
+  start,
+  stop,
+} from "./support/interactions-stream"
 
 describe("Interactions SSE", () => {
   test("emits text event order, increasing sequence and accumulated terminal output", () => {
@@ -71,70 +45,13 @@ describe("Interactions SSE", () => {
       [
         {
           type: "message",
-          id: "step_0",
+          id: "v1_id_0",
           role: "assistant",
           status: "completed",
           content: [{ type: "output_text", text: "Hello", annotations: [] }],
         },
       ],
     )
-  })
-
-  test("isolates interleaved tools and delays argument events until validation", () => {
-    const result = run([
-      created,
-      start(0, { type: "function_call", id: "c0", name: "zero" }),
-      start(1, { type: "function_call", id: "c1", name: "one" }),
-      delta(0, { type: "arguments_delta", arguments: '{"x":' }),
-      delta(1, { type: "arguments_delta", arguments: '{"y":2}' }),
-      delta(0, { type: "arguments_delta", arguments: "1}" }),
-      stop(1),
-      stop(0),
-      completed,
-    ])
-    const done = result.filter(
-      (event) => event.type === "response.function_call_arguments.done",
-    )
-    expect(done.map((event) => [event.item_id, event.arguments])).toEqual([
-      ["step_1", '{"y":2}'],
-      ["step_0", '{"x":1}'],
-    ])
-    const output = (result.at(-1)?.response as Record<string, unknown>)
-      .output as Array<Record<string, unknown>>
-    expect(output.map((item) => item.call_id)).toEqual(["c0", "c1"])
-  })
-
-  test("restores a namespace on a streamed tool call", () => {
-    const stream = createInteractionsEventStream({
-      requestedModel: "client",
-      createdAt: 1,
-      toolNamespaces: new Map([["mcp__demo__lookup", "mcp__demo"]]),
-    })
-    const output = events(
-      stream.push(
-        encoder.encode(
-          frame(created)
-            + frame(
-              start(0, {
-                type: "function_call",
-                id: "c",
-                name: "mcp__demo__lookup",
-              }),
-            )
-            + frame(delta(0, { type: "arguments_delta", arguments: '{"q":1}' }))
-            + frame(stop(0))
-            + frame(completed),
-        ),
-      ) + stream.flush(),
-    )
-    const added = output.find(
-      (event) => event.type === "response.output_item.added",
-    )
-    expect(added?.item).toMatchObject({
-      type: "function_call",
-      name: "lookup",
-      namespace: "mcp__demo",
-    })
   })
 
   test("supports every byte boundary, UTF-8, CRLF and multiline data", () => {
@@ -241,61 +158,24 @@ describe("Interactions SSE", () => {
   })
 })
 
-describe("Interactions SSE streamed tool arguments", () => {
-  test("ignores the empty step.start placeholder when arguments stream later", () => {
+describe("Interactions SSE item identity", () => {
+  test("uses one item id for events and the terminal output", () => {
     const result = run([
       created,
-      start(0, {
-        type: "function_call",
-        id: "call_1",
-        name: "exec_command",
-        arguments: {},
-      }),
-      delta(0, {
-        type: "arguments_delta",
-        arguments: '{"cmd":"cat fixture.txt"}',
-      }),
+      start(0),
+      delta(0, { type: "text", text: "Hi" }),
       stop(0),
       completed,
     ])
-    const done = result.find(
-      (event) => event.type === "response.function_call_arguments.done",
+    const referenced = new Set(
+      result
+        .filter((event) => event.item_id !== undefined)
+        .map((event) => event.item_id),
     )
-    expect(done?.arguments).toBe('{"cmd":"cat fixture.txt"}')
+    expect([...referenced]).toEqual(["v1_id_0"])
     const output = (result.at(-1)?.response as Record<string, unknown>)
       .output as Array<Record<string, unknown>>
-    expect(output[0]).toMatchObject({
-      type: "function_call",
-      call_id: "call_1",
-      name: "exec_command",
-      arguments: '{"cmd":"cat fixture.txt"}',
-    })
-  })
-
-  test("keeps a zero-argument streamed call valid without any delta", () => {
-    const result = run([
-      created,
-      start(0, {
-        type: "function_call",
-        id: "call_2",
-        name: "list_files",
-        arguments: {},
-      }),
-      stop(0),
-      completed,
-    ])
-    const done = result.find(
-      (event) => event.type === "response.function_call_arguments.done",
-    )
-    expect(done?.arguments).toBe("{}")
-    const output = (result.at(-1)?.response as Record<string, unknown>)
-      .output as Array<Record<string, unknown>>
-    expect(output[0]).toMatchObject({
-      type: "function_call",
-      call_id: "call_2",
-      arguments: "{}",
-      status: "completed",
-    })
+    expect(output.map((item) => item.id)).toEqual(["v1_id_0"])
   })
 })
 
@@ -552,6 +432,196 @@ describe("Interactions SSE failure boundaries", () => {
       },
     ])
     expect(mismatch.at(-1)?.type).toBe("response.failed")
+    const badSignature = run([
+      created,
+      start(0, { type: "thought" }),
+      {
+        ...completed,
+        interaction: {
+          ...completed.interaction,
+          steps: [{ type: "thought", signature: 42 }],
+        },
+      },
+    ])
+    expect(badSignature.at(-1)?.type).toBe("response.failed")
+  })
+})
+
+describe("Interactions SSE failed replay state", () => {
+  const summary = delta(0, {
+    type: "thought_summary",
+    content: { type: "text", text: "thinking" },
+  })
+  const signature = delta(0, { type: "thought_signature", signature: "signed" })
+  const thought = { type: "thought" }
+
+  test("keeps a received thought signature when the stream ends early", () => {
+    const stream = converter()
+    const result = events(
+      stream.push(
+        encoder.encode(
+          [created, start(0, thought), summary, signature]
+            .map((value) => frame(value))
+            .join(""),
+        ),
+      ) + stream.flush(),
+    )
+    expect(result.at(-1)?.type).toBe("response.failed")
+    expect(result.some((event) => event.type === "response.completed")).toBe(
+      false,
+    )
+    const item = result.find(
+      (event) => event.type === "response.output_item.done",
+    )?.item as Record<string, unknown>
+    expect(replay(item)).toEqual({
+      type: "thought",
+      signature: "signed",
+      summary: [{ type: "text", text: "thinking" }],
+    })
+    expect(failedOutput(result)).toEqual([item])
+  })
+
+  test("keeps a received thought signature when the upstream reports an error", () => {
+    const result = run([
+      created,
+      start(0, thought),
+      summary,
+      signature,
+      { event_type: "error", error: { code: "quota", message: "exceeded" } },
+    ])
+    const failed = result.at(-1)?.response as Record<string, unknown>
+    expect(result.at(-1)?.type).toBe("response.failed")
+    expect(failed.error).toEqual({ code: "quota", message: "exceeded" })
+    expect(replay(failedOutput(result)[0])).toEqual({
+      type: "thought",
+      signature: "signed",
+      summary: [{ type: "text", text: "thinking" }],
+    })
+  })
+
+  test("never fabricates a replay envelope for an unsigned thought fragment", () => {
+    const stream = converter()
+    const result = events(
+      stream.push(
+        encoder.encode(
+          [created, start(0, thought), summary]
+            .map((value) => frame(value))
+            .join(""),
+        ),
+      ) + stream.flush(),
+    )
+    expect(result.at(-1)?.type).toBe("response.failed")
+    expect(failedOutput(result)).toEqual([
+      {
+        type: "reasoning",
+        id: "v1_id_0",
+        summary: [{ type: "summary_text", text: "thinking" }],
+      },
+    ])
+  })
+
+  test("accepts a signature that only the terminal snapshot carries", () => {
+    const result = run([
+      created,
+      start(0, thought),
+      summary,
+      stop(0),
+      {
+        ...completed,
+        interaction: {
+          ...completed.interaction,
+          steps: [
+            {
+              type: "thought",
+              signature: "late",
+              summary: [{ type: "text", text: "thinking" }],
+            },
+          ],
+        },
+      },
+    ])
+    expect(result.at(-1)?.type).toBe("response.completed")
+    expect(
+      replay(
+        result.find((event) => event.type === "response.output_item.done")
+          ?.item as Record<string, unknown>,
+      ),
+    ).toEqual({
+      type: "thought",
+      signature: "late",
+      summary: [{ type: "text", text: "thinking" }],
+    })
+  })
+
+  test("accepts a terminal snapshot that omits optional fields", () => {
+    const result = run([
+      created,
+      start(0, thought),
+      summary,
+      signature,
+      stop(0),
+      {
+        ...completed,
+        interaction: { ...completed.interaction, steps: [thought] },
+      },
+    ])
+    expect(result.at(-1)?.type).toBe("response.completed")
+    expect(
+      replay(
+        result.find((event) => event.type === "response.output_item.done")
+          ?.item as Record<string, unknown>,
+      ),
+    ).toEqual({
+      type: "thought",
+      signature: "signed",
+      summary: [{ type: "text", text: "thinking" }],
+    })
+  })
+
+  test("keeps usage captured before a failure", () => {
+    const stream = converter()
+    const result = events(
+      stream.push(
+        encoder.encode(
+          [
+            created,
+            start(0),
+            {
+              ...delta(0, { type: "text", text: "partial" }),
+              metadata: {
+                total_usage: {
+                  total_input_tokens: 7,
+                  total_output_tokens: 2,
+                  total_thought_tokens: 0,
+                  total_cached_tokens: 0,
+                  total_tokens: 9,
+                },
+              },
+            },
+          ]
+            .map((value) => frame(value))
+            .join(""),
+        ),
+      ) + stream.flush(),
+    )
+    const failed = result.at(-1)?.response as Record<string, unknown>
+    expect(result.at(-1)?.type).toBe("response.failed")
+    expect(failed.usage).toEqual({
+      input_tokens: 7,
+      output_tokens: 2,
+      total_tokens: 9,
+      input_tokens_details: { cached_tokens: 0 },
+      output_tokens_details: { reasoning_tokens: 0 },
+    })
+    expect(failedOutput(result)).toEqual([
+      {
+        type: "message",
+        id: "v1_id_0",
+        role: "assistant",
+        status: "incomplete",
+        content: [{ type: "output_text", text: "partial", annotations: [] }],
+      },
+    ])
   })
 })
 
@@ -575,20 +645,6 @@ test("EOF ends partial text items before failure without losing emitted text", (
   expect((result[3].response as Record<string, unknown>).output).toEqual([
     result[2].item,
   ])
-})
-
-test("invalid tools never emit an executable call", () => {
-  const result = run([
-    created,
-    start(0, { type: "function_call", id: "c", name: "bad" }),
-    delta(0, { type: "arguments_delta", arguments: "{bad" }),
-    stop(0),
-    completed,
-  ])
-  expect(result.at(-1)?.type).toBe("response.failed")
-  expect(
-    result.some((event) => event.type === "response.output_item.added"),
-  ).toBe(false)
 })
 
 test("invalid initial thought fails without escaping push", () => {

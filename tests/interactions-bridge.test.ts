@@ -101,20 +101,26 @@ async function keyError(path: string): Promise<string> {
   throw new Error(`Expected readApiKey to reject ${path}`)
 }
 
-async function readRecords(
-  path: string,
-  minimum: number,
-): Promise<Array<JsonObject>> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    const text = await Bun.file(path)
-      .text()
-      .catch(() => "")
-    const lines = text.split("\n").filter((line) => line !== "")
-    if (lines.length >= minimum)
-      return lines.map((line) => JSON.parse(line) as JsonObject)
-    await Bun.sleep(10)
-  }
-  throw new Error(`Expected ${minimum} bridge record lines in ${path}`)
+function streamOf(frames: Array<Uint8Array>): Promise<Response> {
+  return Promise.resolve(
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of frames) controller.enqueue(chunk)
+          controller.close()
+        },
+      }),
+    ),
+  )
+}
+
+/** Reads the log exactly as it stands, without waiting for more writes. */
+async function lines(path: string): Promise<Array<JsonObject>> {
+  const text = await Bun.file(path).text()
+  return text
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as JsonObject)
 }
 
 describe("Interactions bridge boundary", () => {
@@ -262,12 +268,26 @@ describe("Interactions bridge boundary", () => {
     const firstBody = (await first.json()) as JsonObject
     const secondBody = (await second.json()) as JsonObject
     expect(firstBody.id).not.toBe(secondBody.id)
-    expect(firstBody.output).toEqual(secondBody.output)
+    const outputs = [firstBody, secondBody].map((body) =>
+      (body.output as Array<JsonObject>).map((item) => {
+        const { id, ...rest } = item
+        expect(id).toBeString()
+        return rest
+      }),
+    )
+    expect(outputs[0]).toEqual(outputs[1])
+    expect(firstBody.output).not.toEqual(secondBody.output)
   })
+})
 
-  test("redacts credentials and digests replay data in records", async () => {
+describe("Interactions bridge records", () => {
+  test("keeps the raw request, response and replay values", async () => {
     const directory = await temporaryDirectory()
     const recordPath = join(directory, "records.jsonl")
+    const request = textRequest({
+      prompt_cache_key: "cache-key-1",
+      client_metadata: { "x-codex-turn-metadata": { turn: "t1" } },
+    })
     const handler = bridge({
       mode: "live",
       apiKey: "upstream-key",
@@ -279,17 +299,180 @@ describe("Interactions bridge boundary", () => {
           signature: "leaked-signature-value",
         }),
     })
-    await handler(post(textRequest()))
+    await handler(post(request, { headers: { "session-id": "session-raw" } }))
 
-    const records = await readRecords(recordPath, 3)
-    const upstream = records.find((record) => record.phase === "upstream_json")
-    const body = upstream?.body as JsonObject
-    expect(body.token).toBe("[redacted]")
-    expect(body.signature).toMatchObject({ length: 22 })
-    const raw = await Bun.file(recordPath).text()
-    expect(raw).not.toContain("leaked-token-value")
-    expect(raw).not.toContain("leaked-signature-value")
-    expect(raw).not.toContain(TOKEN)
+    const records = await lines(recordPath)
+    const inbound = records.find((record) => record.phase === "inbound")
+    expect((inbound?.headers as JsonObject).authorization).toBe(
+      `Bearer ${TOKEN}`,
+    )
+    expect((inbound?.headers as JsonObject)["session-id"]).toBe("session-raw")
+    expect(inbound?.body).toEqual(request)
+
+    const converted = records.find((record) => record.phase === "converted")
+    expect(converted?.metadata).toEqual({
+      "session-id": "session-raw",
+      prompt_cache_key: "cache-key-1",
+      client_metadata: { "x-codex-turn-metadata": { turn: "t1" } },
+    })
+    expect(converted?.body).toMatchObject({
+      model: "gemini-3.8-flash",
+      store: false,
+    })
+
+    const upstream = records.find(
+      (record) => record.phase === "upstream_request",
+    )
+    expect((upstream?.headers as JsonObject)["x-goog-api-key"]).toBe(
+      "upstream-key",
+    )
+
+    const reply = records.find((record) => record.phase === "upstream_json")
+    expect(reply?.body).toContain("leaked-token-value")
+    expect(reply?.body).toContain("leaked-signature-value")
+  })
+
+  test("keeps a long upstream error and an unparsable body verbatim", async () => {
+    const directory = await temporaryDirectory()
+    const recordPath = join(directory, "records.jsonl")
+    const longBody = `x${"y".repeat(9000)}z`
+    const failing = bridge({
+      mode: "live",
+      apiKey: "upstream-key",
+      recordPath,
+      fetchImpl: () => Promise.resolve(new Response(longBody, { status: 429 })),
+    })
+    expect((await failing(post(textRequest()))).status).toBe(429)
+
+    const garbage = bridge({
+      mode: "live",
+      apiKey: "upstream-key",
+      recordPath,
+      fetchImpl: () =>
+        Promise.resolve(new Response("{not json", { status: 200 })),
+    })
+    expect((await garbage(post(textRequest()))).status).toBe(502)
+
+    const records = await lines(recordPath)
+    expect(
+      records.find((record) => record.phase === "upstream_error")?.body,
+    ).toBe(longBody)
+    expect(
+      records.find((record) => record.phase === "upstream_json")?.body,
+    ).toBe("{not json")
+  })
+
+  test("records an unparsable inbound body", async () => {
+    const directory = await temporaryDirectory()
+    const recordPath = join(directory, "records.jsonl")
+    const response = await bridge({ recordPath })(
+      new Request(`${ORIGIN}/v1/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: '{"model":',
+      }),
+    )
+    expect(response.status).toBe(400)
+    const records = await lines(recordPath)
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      phase: "invalid_json",
+      body: '{"model":',
+    })
+  })
+
+  test("stores both SSE directions byte for byte", async () => {
+    const directory = await temporaryDirectory()
+    const recordPath = join(directory, "records.jsonl")
+    const signature = "sig-\u00e9\u00e8-\u4e2d\u6587"
+    const events = [
+      {
+        event_type: "interaction.created",
+        interaction: { id: "v1_sse", status: "in_progress" },
+      },
+      { event_type: "step.start", index: 0, step: { type: "thought" } },
+      {
+        event_type: "step.delta",
+        index: 0,
+        delta: { type: "thought_signature", signature },
+      },
+      { event_type: "step.stop", index: 0 },
+      {
+        event_type: "interaction.completed",
+        interaction: { id: "v1_sse", status: "completed" },
+      },
+    ]
+    const upstreamText = events
+      .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+      .join("")
+    const bytes = new TextEncoder().encode(upstreamText)
+    // Split inside a multi-byte character and inside a frame.
+    const cut = upstreamText.indexOf(signature) + 6
+    const head = bytes.slice(0, cut)
+    const tail = bytes.slice(cut)
+    const handler = bridge({
+      mode: "live",
+      apiKey: "upstream-key",
+      recordPath,
+      fetchImpl: () => streamOf([head, tail]),
+    })
+
+    const downstream = await (
+      await handler(post(textRequest({ stream: true })))
+    ).text()
+    expect(downstream).toContain("response.completed")
+
+    const records = await lines(recordPath)
+    const upstream = records
+      .filter((record) => record.phase === "upstream_sse")
+      .map((record) => record.text)
+      .join("")
+    expect(upstream).toBe(upstreamText)
+    expect(
+      records
+        .filter((record) => record.phase === "downstream_sse")
+        .map((record) => record.text)
+        .join(""),
+    ).toBe(downstream)
+    const replay = /agdata1\.([\w-]+)/.exec(downstream)
+    expect(
+      Buffer.from(replay?.[1] ?? "", "base64url").toString("utf8"),
+    ).toContain(signature)
+    expect(records.at(-1)?.phase).toBe("stream_end")
+  })
+
+  test("correlates interleaved requests and flushes every record", async () => {
+    const directory = await temporaryDirectory()
+    const recordPath = join(directory, "records.jsonl")
+    const handler = bridge({
+      mode: "live",
+      apiKey: "upstream-key",
+      recordPath,
+      fetchImpl: () => interactionReply(),
+    })
+    await Promise.all([
+      handler(post(textRequest({ prompt_cache_key: "first" }))),
+      handler(post(textRequest({ prompt_cache_key: "second" }))),
+    ])
+
+    const records = await lines(recordPath)
+    expect(records).toHaveLength(8)
+    const ids = new Set(records.map((record) => record.id))
+    expect(ids.size).toBe(2)
+    for (const id of ids) {
+      const phases = records
+        .filter((record) => record.id === id)
+        .map((record) => record.phase)
+      expect(phases).toEqual([
+        "inbound",
+        "converted",
+        "upstream_request",
+        "upstream_json",
+      ])
+    }
   })
 })
 

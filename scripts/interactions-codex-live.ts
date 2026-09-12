@@ -5,7 +5,6 @@
  * copilot-api routing, and keeps no session or credential state beyond the
  * process environment. See [[GEMINI_INTERACTIONS_V1_CODEX_CLI_TEST_PLAN_CN.md]].
  */
-import { createHash } from "node:crypto"
 import { appendFile, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 
@@ -13,14 +12,13 @@ import {
   convertInteractionsResponseToResponses,
   convertResponsesRequestToInteractions,
   type JsonObject,
+  type ToolIdentity,
 } from "../src/services/interactions/convert"
 import { createInteractionsEventStream } from "../src/services/interactions/stream"
 
 const GOOGLE_INTERACTIONS_URL =
   "https://generativelanguage.googleapis.com/v1/interactions"
 const PLACEHOLDER = /^<.*>$/
-const SECRET_KEY = /authorization|api[-_]?key|token|secret|cookie/i
-const DIGESTED_KEY = /^(?:signature|encrypted_content)$/
 const DEFAULT_MODEL = "gemini-3.8-flash"
 const DEFAULT_BODY_LIMIT = 4 * 1024 * 1024
 const DEFAULT_HEADER_TIMEOUT_MS = 120_000
@@ -51,50 +49,38 @@ export interface BridgeOptions {
 
 type Recorder = (entry: JsonObject) => void
 
-function digest(value: unknown): JsonObject {
-  const text = typeof value === "string" ? value : JSON.stringify(value)
-  return {
-    length: text.length,
-    sha256: createHash("sha256").update(text).digest("hex"),
-  }
-}
-
-function redact(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map((entry) => redact(entry))
-  if (value === null || typeof value !== "object") return value
+function headersOf(headers: Headers): JsonObject {
   const result: JsonObject = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (DIGESTED_KEY.test(key)) result[key] = digest(entry)
-    // Usage counters match SECRET_KEY ("total_cached_tokens"), but a number
-    // cannot carry a credential, and dropping it would erase the only record
-    // of what the upstream reported.
-    else if (
-      SECRET_KEY.test(key)
-      && !isContainer(entry)
-      && typeof entry !== "number"
-    )
-      result[key] = "[redacted]"
-    else result[key] = redact(entry)
-  }
+  for (const [key, value] of headers) result[key] = value
   return result
 }
 
-/** Tool JSON Schemas may name properties like `token_budget`; keep them. */
-function isContainer(value: unknown): boolean {
-  return value !== null && typeof value === "object"
-}
+/**
+ * Local single-user logging. Every value is written exactly as it was received
+ * or sent, including credentials, signatures and replay data; the file is kept
+ * outside version control. Writes stay on one chain so the caller can await the
+ * log before answering, and shutdown can drain it, instead of dropping a final
+ * record when the process exits.
+ */
+let recordQueue: Promise<void> = Promise.resolve()
 
 function createRecorder(path: string | undefined): Recorder {
   if (path === undefined) return () => {}
-  let queue = mkdir(dirname(path), { recursive: true }).then(() => {})
+  const ready = mkdir(dirname(path), { recursive: true }).then(() => {})
   return (entry) => {
     const line = `${JSON.stringify(entry)}\n`
-    queue = queue
+    recordQueue = recordQueue
+      .then(() => ready)
       .then(() => appendFile(path, line))
       .catch((error: unknown) => {
         process.stderr.write(`bridge record failed: ${String(error)}\n`)
       })
   }
+}
+
+/** Waits for queued record writes; used before answering and on shutdown. */
+export async function flushRecords(): Promise<void> {
+  await recordQueue
 }
 
 function fail(status: number, code: string, message: string): Response {
@@ -171,9 +157,11 @@ interface BridgeRuntime {
   headerTimeoutMs: number
   idleTimeoutMs: number
   nextSampleId: () => string
+  nextRequestId: () => string
 }
 
 interface UpstreamCall {
+  id: string
   body: JsonObject
   stream: boolean
   signal: AbortSignal
@@ -181,12 +169,17 @@ interface UpstreamCall {
 
 interface ConverterOptions {
   requestedModel: string
-  customTools: ReadonlySet<string>
-  toolNamespaces: ReadonlyMap<string, string>
+  tools: ReadonlyMap<string, ToolIdentity>
+}
+
+interface JsonContext {
+  id: string
+  converterOptions: ConverterOptions
 }
 
 interface StreamContext {
   runtime: BridgeRuntime
+  id: string
   request: Request
   upstream: Response
   converterOptions: ConverterOptions
@@ -195,6 +188,7 @@ interface StreamContext {
 }
 
 interface Attempt {
+  id: string
   request: Request
   payload: unknown
   stream: boolean
@@ -213,17 +207,25 @@ async function callUpstream(
     )
   if (runtime.apiKey === undefined)
     throw new Error("live mode requires a Gemini API key")
+  const headers = {
+    "content-type": "application/json",
+    accept: call.stream ? "text/event-stream" : "application/json",
+    "x-goog-api-key": runtime.apiKey,
+  }
+  runtime.record({
+    phase: "upstream_request",
+    id: call.id,
+    url: runtime.upstreamUrl,
+    headers,
+    body: call.body,
+  })
   return runtime.fetchImpl(runtime.upstreamUrl, {
     method: "POST",
     // Never copy client credentials, and never follow a redirect that could
     // carry the upstream key to another host.
     redirect: "error",
     signal: call.signal,
-    headers: {
-      "content-type": "application/json",
-      accept: call.stream ? "text/event-stream" : "application/json",
-      "x-goog-api-key": runtime.apiKey,
-    },
+    headers,
     body: JSON.stringify(call.body),
   })
 }
@@ -231,8 +233,9 @@ async function callUpstream(
 async function upstreamError(
   runtime: BridgeRuntime,
   upstream: Response,
+  id: string,
 ): Promise<Response> {
-  const text = (await upstream.text().catch(() => "")).slice(0, 8192)
+  const text = await upstream.text().catch(() => "")
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -241,7 +244,13 @@ async function upstreamError(
   }
   const detail = (parsed as JsonObject | undefined)?.error
   const code = codeOf(detail, `upstream_${upstream.status}`)
-  runtime.record({ phase: "upstream_error", status: upstream.status, code })
+  runtime.record({
+    phase: "upstream_error",
+    id,
+    status: upstream.status,
+    headers: headersOf(upstream.headers),
+    body: text,
+  })
   return fail(
     upstream.status,
     code,
@@ -252,15 +261,23 @@ async function upstreamError(
 async function jsonResponse(
   runtime: BridgeRuntime,
   upstream: Response,
-  converterOptions: ConverterOptions,
+  context: JsonContext,
 ): Promise<Response> {
+  const { id, converterOptions } = context
+  const text = await upstream.text().catch(() => "")
+  runtime.record({
+    phase: "upstream_json",
+    id,
+    status: upstream.status,
+    headers: headersOf(upstream.headers),
+    body: text,
+  })
   let json: unknown
   try {
-    json = await upstream.json()
+    json = JSON.parse(text)
   } catch (error) {
     return fail(502, "upstream_invalid_json", describe(error))
   }
-  runtime.record({ phase: "upstream_json", body: redact(json) })
   try {
     return Response.json(
       convertInteractionsResponseToResponses(json, converterOptions),
@@ -271,7 +288,7 @@ async function jsonResponse(
 }
 
 function streamResponse(context: StreamContext): Response {
-  const { runtime, request, upstream, converterOptions, abort, onAbort } =
+  const { runtime, id, request, upstream, converterOptions, abort, onAbort } =
     context
   const cleanup = () => request.signal.removeEventListener("abort", onAbort)
   const body = upstream.body as ReadableStream<Uint8Array> | null
@@ -280,12 +297,16 @@ function streamResponse(context: StreamContext): Response {
     return fail(502, "upstream_empty_stream", "Upstream returned no stream")
   }
   const encoder = new TextEncoder()
+  // Records what the converter is fed, so a stream that ends in failure is
+  // still reconstructible from the log.
+  const upstreamDecoder = new TextDecoder()
   const streamConverter = createInteractionsEventStream({
     ...converterOptions,
     createdAt: Math.floor(Date.now() / 1000),
   })
   const reader = body.getReader()
   let finished = false
+  let cancelled = false
   let idleTimer: ReturnType<typeof setTimeout> | undefined
   const clearIdle = () => {
     if (idleTimer !== undefined) clearTimeout(idleTimer)
@@ -294,16 +315,23 @@ function streamResponse(context: StreamContext): Response {
   const wire = new ReadableStream<Uint8Array>({
     start(controller) {
       const enqueue = (text: string) => {
-        if (text !== "") controller.enqueue(encoder.encode(text))
+        if (text === "") return
+        runtime.record({ phase: "downstream_sse", id, text })
+        controller.enqueue(encoder.encode(text))
       }
-      const finish = () => {
+      const finish = async () => {
         if (finished) return
         finished = true
         clearIdle()
         enqueue(streamConverter.flush())
-        runtime.record({ phase: "stream_end", aborted: abort.signal.aborted })
+        runtime.record({
+          phase: "stream_end",
+          id,
+          aborted: abort.signal.aborted,
+        })
         cleanup()
-        controller.close()
+        await flushRecords()
+        if (!cancelled) controller.close()
       }
       const pump = async () => {
         try {
@@ -312,13 +340,18 @@ function streamResponse(context: StreamContext): Response {
             idleTimer = setTimeout(() => abort.abort(), runtime.idleTimeoutMs)
             const { done, value } = await reader.read()
             if (done) break
+            runtime.record({
+              phase: "upstream_sse",
+              id,
+              text: upstreamDecoder.decode(value, { stream: true }),
+            })
             enqueue(streamConverter.push(value))
           }
         } catch {
           // Exhausted or aborted streams fall through to finish(), which emits
           // response.failed unless a terminal event already arrived.
         }
-        finish()
+        await finish()
       }
       void pump()
     },
@@ -326,6 +359,7 @@ function streamResponse(context: StreamContext): Response {
       // The consumer is gone: stop the pump from closing an already-cancelled
       // controller and release the upstream reader.
       finished = true
+      cancelled = true
       clearIdle()
       streamConverter.cancel()
       abort.abort()
@@ -345,14 +379,18 @@ async function respond(
   runtime: BridgeRuntime,
   attempt: Attempt,
 ): Promise<Response> {
-  const { request, payload, stream, requestedModel } = attempt
+  const { id, request, payload, stream, requestedModel } = attempt
   // Record before conversion so a rejected request is still diagnosable.
   runtime.record({
     phase: "inbound",
+    id,
     mode: runtime.mode,
     stream,
     model: requestedModel,
-    body: redact(payload),
+    method: request.method,
+    url: request.url,
+    headers: headersOf(request.headers),
+    body: payload,
   })
   let converted
   try {
@@ -365,9 +403,20 @@ async function respond(
         ),
     })
   } catch (error) {
+    runtime.record({
+      phase: "unsupported_request",
+      id,
+      message: describe(error),
+    })
     return fail(400, "unsupported_request", describe(error))
   }
-  runtime.record({ phase: "converted", stream, body: redact(converted.body) })
+  runtime.record({
+    phase: "converted",
+    id,
+    stream,
+    metadata: converted.metadata,
+    body: converted.body,
+  })
 
   const abort = new AbortController()
   const onAbort = () => abort.abort()
@@ -377,6 +426,7 @@ async function respond(
   let upstream: Response
   try {
     upstream = await callUpstream(runtime, {
+      id,
       body: converted.body,
       stream,
       signal: abort.signal,
@@ -384,25 +434,30 @@ async function respond(
   } catch (error) {
     clearTimeout(headerTimer)
     cleanup()
+    runtime.record({
+      phase: "upstream_unreachable",
+      id,
+      error: describe(error),
+    })
     return fail(502, "upstream_unreachable", describe(error))
   }
   clearTimeout(headerTimer)
 
   if (!upstream.ok) {
     cleanup()
-    return await upstreamError(runtime, upstream)
+    return await upstreamError(runtime, upstream, id)
   }
   const converterOptions: ConverterOptions = {
     requestedModel,
-    customTools: converted.customTools,
-    toolNamespaces: converted.toolNamespaces,
+    tools: converted.tools,
   }
   if (!stream) {
     cleanup()
-    return await jsonResponse(runtime, upstream, converterOptions)
+    return await jsonResponse(runtime, upstream, { id, converterOptions })
   }
   return streamResponse({
     runtime,
+    id,
     request,
     upstream,
     converterOptions,
@@ -425,10 +480,12 @@ export function createBridgeHandler(
     headerTimeoutMs: options.headerTimeoutMs ?? DEFAULT_HEADER_TIMEOUT_MS,
     idleTimeoutMs: options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
     nextSampleId: () => `sample_${++counter}`,
+    nextRequestId: () => `req_${++counter}`,
   }
   const bodyLimit = options.bodyLimit ?? DEFAULT_BODY_LIMIT
 
   return async (request) => {
+    const id = runtime.nextRequestId()
     const url = new URL(request.url)
     if (request.method === "GET" && url.pathname === "/health")
       return Response.json({
@@ -458,6 +515,8 @@ export function createBridgeHandler(
     try {
       payload = JSON.parse(text)
     } catch {
+      runtime.record({ phase: "invalid_json", id, body: text })
+      await flushRecords()
       return fail(400, "invalid_json", "Request body must be JSON")
     }
     const model =
@@ -469,12 +528,17 @@ export function createBridgeHandler(
       ) ?
         ((payload as JsonObject).model as string)
       : runtime.upstreamModel
-    return respond(runtime, {
+    const response = await respond(runtime, {
+      id,
       request,
       payload,
       stream: (payload as JsonObject).stream === true,
       requestedModel: model,
     })
+    // The records for this request are the debugging contract; do not answer
+    // while they are still queued.
+    await flushRecords()
+    return response
   }
 }
 
@@ -534,6 +598,11 @@ async function main(): Promise<void> {
   process.stdout.write(
     `interactions bridge: http://127.0.0.1:${server.port}/v1/responses mode=${mode}\n`,
   )
+  // Drain queued records on a normal stop instead of losing the last request.
+  for (const signal of ["SIGINT", "SIGTERM"] as const)
+    process.on(signal, () => {
+      void flushRecords().finally(() => process.exit(0))
+    })
 }
 
 if (import.meta.main) await main()
