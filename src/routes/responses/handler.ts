@@ -10,6 +10,7 @@ import { state } from "~/lib/state"
 import { createResponses } from "~/services/copilot/create-responses"
 import { createDeepSeekResponses } from "~/services/deepseek/create-responses"
 
+import { stripReasoningContent } from "./gpt-reasoning-content"
 import { normalizeResponsesItemIds } from "./sse-item-id-normalizer"
 
 const forwardedResponseHeaders = [
@@ -145,7 +146,7 @@ const resolveResponseModel = (
     const config = state.runtimeConfig ?? {
       environment: "legacy",
       providers: {
-        copilot: { enabled: true },
+        copilot: { enabled: true, stripReasoningContentForGpt: true },
         deepseek: {
           enabled: false,
           baseUrl: "https://api.deepseek.com",
@@ -157,13 +158,36 @@ const resolveResponseModel = (
     }
     const route = resolveModelRoute(payload.model, config)
     if (route.provider === "deepseek") validateDeepSeekPayload(payload)
+    let nextPayload: Record<string, unknown> = payload
+    let changed = false
 
-    if (route.upstreamModel === payload.model) {
+    if (route.upstreamModel !== payload.model) {
+      nextPayload = { ...nextPayload, model: route.upstreamModel }
+      changed = true
+    }
+
+    if (
+      route.provider === "copilot"
+      && route.upstreamModel.startsWith("gpt-")
+      && config.providers.copilot.stripReasoningContentForGpt
+      && Array.isArray(nextPayload.input)
+    ) {
+      const stripped = stripReasoningContent(nextPayload.input)
+      if (stripped.changed) {
+        nextPayload = { ...nextPayload, input: stripped.input }
+        changed = true
+        consola.info(
+          `GPT reasoning content stripped: model=${route.upstreamModel} indices=[${stripped.indices.join(",")}] items=${stripped.indices.length} contentParts=${stripped.contentParts}`,
+        )
+      }
+    }
+
+    if (!changed) {
       return { body, requestedModel: payload.model, provider: route.provider }
     }
 
     return {
-      body: JSON.stringify({ ...payload, model: route.upstreamModel }),
+      body: JSON.stringify(nextPayload),
       requestedModel: payload.model,
       provider: route.provider,
     }

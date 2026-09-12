@@ -4,7 +4,10 @@ import { z } from "zod"
 
 import { PATHS } from "./paths"
 
-const providerSchema = z.strictObject({ enabled: z.boolean().optional() })
+const providerSchema = z.strictObject({
+  enabled: z.boolean().optional(),
+  stripReasoningContentForGpt: z.boolean().optional(),
+})
 const deepSeekSchema = z.strictObject({
   enabled: z.boolean().optional(),
   baseUrl: z.url().optional(),
@@ -35,7 +38,7 @@ export interface RuntimeConfig {
   environment: string
   source?: string
   providers: {
-    copilot: { enabled: boolean }
+    copilot: { enabled: boolean; stripReasoningContentForGpt: boolean }
     deepseek: {
       enabled: boolean
       baseUrl: string
@@ -55,7 +58,7 @@ interface LoadRuntimeConfigOptions {
 
 const defaults = (): Omit<RuntimeConfig, "environment" | "source"> => ({
   providers: {
-    copilot: { enabled: true },
+    copilot: { enabled: true, stripReasoningContentForGpt: true },
     deepseek: {
       enabled: false,
       baseUrl: "https://api.deepseek.com",

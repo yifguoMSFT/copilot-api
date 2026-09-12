@@ -7,7 +7,7 @@ import { resolveModelRoute } from "../src/lib/model-routing"
 const config: RuntimeConfig = {
   environment: "test",
   providers: {
-    copilot: { enabled: true },
+    copilot: { enabled: true, stripReasoningContentForGpt: true },
     deepseek: {
       enabled: true,
       baseUrl: "https://api.deepseek.com",

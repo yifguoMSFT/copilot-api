@@ -85,6 +85,27 @@ For Docker, mount configuration read-only at `/config` and a writable catalog di
 
 Older versions always used `E:/workshop/copilot-api`. Choose the intended old custom file explicitly in the new configuration, verify the generated catalog, then update `model_catalog_json`; no old file is moved or deleted automatically. Roll back by restoring the old proxy command and Codex catalog path.
 
+## GPT reasoning content compatibility
+
+After a task mixes providers, history can contain reasoning items with non-empty `content`. The GPT endpoint rejects that shape with `input[n].content` must be empty, so switching back from DeepSeek used to fail before the model produced any output. copilot-api now clears that field by default for Copilot requests whose resolved upstream model starts with `gpt-`:
+
+```json
+{
+  "providers": {
+    "copilot": {
+      "enabled": true,
+      "stripReasoningContentForGpt": true
+    }
+  }
+}
+```
+
+Only `input[i]` entries with `"type": "reasoning"` and a non-empty `content` array are changed, and only their `content` becomes `[]`. Item order, ids, summaries, encrypted content, tool definitions, tool calls, tool results and every other field are forwarded unchanged. When nothing matches, the original request bytes are forwarded as-is, and DeepSeek requests plus non-GPT Copilot models are never rewritten.
+
+Set `"stripReasoningContentForGpt": false` to forward such history untouched, then restart the proxy. The setting only changes the outbound request; Codex's stored task history is not modified, so the original task can still be resumed after reverting.
+
+To check a build offline, run `bun run build` and then `bun run scripts/verify-dist-gpt-reasoning.ts gpt`, `... gpt-off`, or `... deepseek`. The script mocks every network dependency and asserts the bytes the built `dist/main.js` actually sends.
+
 ## Using with Docker
 
 Build image

@@ -76,3 +76,29 @@ test("uses a portable application data path by default", async () => {
   expect(path.isAbsolute(config.catalog.outputFile)).toBe(true)
   expect(config.catalog.outputFile).not.toContain("E:/workshop/copilot-api")
 })
+
+test("enables GPT reasoning content stripping by default", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "copilot-empty-"))
+  directories.push(directory)
+  const withoutFile = await loadRuntimeConfig({ cwd: directory, env: {} })
+  expect(withoutFile.providers.copilot.stripReasoningContentForGpt).toBe(true)
+
+  const file = await fixture({
+    version: 1,
+    defaults: { providers: { copilot: { enabled: true } } },
+  })
+  const omitted = await loadRuntimeConfig({ configPath: file, env: {} })
+  expect(omitted.providers.copilot.stripReasoningContentForGpt).toBe(true)
+})
+
+test("honors an explicit disable of GPT reasoning content stripping", async () => {
+  const file = await fixture({
+    version: 1,
+    defaults: {
+      providers: { copilot: { stripReasoningContentForGpt: false } },
+    },
+  })
+  const config = await loadRuntimeConfig({ configPath: file, env: {} })
+  expect(config.providers.copilot.stripReasoningContentForGpt).toBe(false)
+  expect(config.providers.copilot.enabled).toBe(true)
+})

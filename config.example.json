@@ -2,7 +2,7 @@
   "version": 1,
   "defaults": {
     "providers": {
-      "copilot": { "enabled": true },
+      "copilot": { "enabled": true, "stripReasoningContentForGpt": true },
       "deepseek": {
         "enabled": false,
         "baseUrl": "https://api.deepseek.com",
