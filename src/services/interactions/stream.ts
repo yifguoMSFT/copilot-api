@@ -23,6 +23,12 @@ interface StepState {
   item?: JsonObject
 }
 
+function optionalObject(value: unknown): JsonObject | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ?
+      (value as JsonObject)
+    : undefined
+}
+
 /** One instance per response. Owns bytes and protocol state, never network I/O. */
 export class InteractionsEventStream {
   private decoder = new TextDecoder(undefined, { fatal: true })
@@ -34,6 +40,7 @@ export class InteractionsEventStream {
   private sentDone = false
   private started = false
   private retainedBytes = 0
+  private retainedUsage: JsonObject | undefined
   private interaction: JsonObject
   private steps = new Map<number, StepState>()
   private nextOutputIndex = 0
@@ -163,6 +170,7 @@ export class InteractionsEventStream {
         if (state.stopped)
           throw new InteractionsConversionError("Duplicate step.stop")
         state.stopped = true
+        this.captureUsage(event.usage)
         if (state.step.type !== "thought") this.finishStep(state)
         return
       }
@@ -245,6 +253,7 @@ export class InteractionsEventStream {
   private delta(event: JsonObject): void {
     const state = this.state(event.index)
     const delta = object(event.delta)
+    this.captureUsage(optionalObject(event.metadata)?.total_usage)
     if (state.done || (state.stopped && delta.type !== "thought_signature")) {
       throw new InteractionsConversionError("Delta after step.stop")
     }
@@ -413,6 +422,8 @@ export class InteractionsEventStream {
       throw new InteractionsConversionError("Interaction id changed")
     if (snapshot.steps !== undefined) this.verifySnapshot(snapshot.steps)
     this.interaction = { ...this.interaction, ...snapshot }
+    if (snapshot.usage === undefined && this.retainedUsage !== undefined)
+      this.interaction.usage = this.retainedUsage
     if (
       ![
         "cancelled",
@@ -468,6 +479,12 @@ export class InteractionsEventStream {
     this.retainedBytes += Buffer.byteLength(text)
     if (this.retainedBytes > MAX_DATA_BYTES * 8)
       throw new InteractionsConversionError("Stream buffer exceeds limit")
+  }
+
+  /** Keeps the latest cumulative usage snapshot; never sums partial values. */
+  private captureUsage(value: unknown): void {
+    const usage = optionalObject(value)
+    if (usage !== undefined) this.retainedUsage = usage
   }
 
   private finishPartial(state: StepState): void {

@@ -221,6 +221,71 @@ describe("Interactions request conversion", () => {
   })
 })
 
+describe("Interactions request tool results", () => {
+  test("allows orphaned tool results only in parent-referenced continuation", () => {
+    const input = [
+      { type: "function_call_output", call_id: "call-1", output: "  sunny\n" },
+    ]
+    const continued = request({
+      model: "g",
+      input,
+      previous_response_id: "v1_parent",
+    })
+    expect(continued.body.input).toEqual([
+      {
+        type: "function_result",
+        call_id: "call-1",
+        result: [{ type: "text", text: "  sunny\n" }],
+      },
+    ])
+    expect(continued.body.previous_interaction_id).toBe("v1_parent")
+    expect(input).toHaveLength(1)
+    const named = request({
+      model: "g",
+      input: [{ ...input[0], name: "weather" }],
+      previous_response_id: "v1_parent",
+    })
+    expect(named.body.input).toEqual([
+      {
+        type: "function_result",
+        call_id: "call-1",
+        name: "weather",
+        result: [{ type: "text", text: "  sunny\n" }],
+      },
+    ])
+  })
+
+  test("keeps full-history name checks and rejects conflicting results", () => {
+    expect(() =>
+      request({
+        model: "g",
+        input: [
+          {
+            type: "function_call",
+            call_id: "call-1",
+            name: "weather",
+            arguments: "{}",
+          },
+          {
+            type: "function_call_output",
+            call_id: "call-1",
+            name: "other",
+            output: "x",
+          },
+        ],
+      }),
+    ).toThrow("Conflicting tool result name")
+    expect(() =>
+      request({
+        model: "g",
+        input: [
+          { type: "function_call_output", call_id: "call-1", output: "x" },
+        ],
+      }),
+    ).toThrow("requires call history")
+  })
+})
+
 describe("Interactions JSON responses", () => {
   test("maps the official usage example including thought tokens", () => {
     const before = structuredClone(official)
@@ -329,5 +394,33 @@ describe("Interactions JSON responses", () => {
     expect(converted.output).toEqual([])
     expect(converted.status).toBe("failed")
     expect(converted.error).toEqual({ code: "quota", message: "No quota" })
+  })
+
+  test("maps v1 errors arrays and defaults unusable diagnostics", () => {
+    const v1 = response({
+      ...reply([]),
+      status: "failed",
+      errors: [
+        {
+          code: "type.googleapis.com/google.rpc.QuotaFailure",
+          message: "quota exhausted",
+        },
+        { code: "second", message: "ignored" },
+      ],
+    })
+    expect(v1.error).toEqual({
+      code: "type.googleapis.com/google.rpc.QuotaFailure",
+      message: "quota exhausted",
+    })
+    expect(
+      response({ ...reply([]), status: "failed", errors: [] }).error,
+    ).toEqual({ code: "upstream_error", message: "Interaction failed" })
+    expect(
+      response({
+        ...reply([]),
+        status: "failed",
+        errors: [null, "ignored", { message: "only message" }],
+      }).error,
+    ).toEqual({ code: "upstream_error", message: "only message" })
   })
 })

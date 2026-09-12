@@ -208,6 +208,142 @@ describe("Interactions SSE", () => {
   })
 })
 
+const terminalUsage = (result: Array<Record<string, unknown>>) =>
+  (result.at(-1)?.response as Record<string, unknown>).usage
+
+describe("Interactions SSE cumulative usage", () => {
+  test("keeps delta metadata total_usage when the terminal snapshot omits it", () => {
+    const result = run([
+      created,
+      start(0),
+      delta(0, {
+        type: "text",
+        text: "Hi",
+        metadata: { total_usage: { ignored: "delta field, not event field" } },
+      }),
+      {
+        event_type: "step.delta",
+        index: 0,
+        delta: { type: "text", text: "!" },
+        metadata: {
+          total_usage: {
+            total_cached_tokens: 4,
+            total_input_tokens: 7,
+            total_output_tokens: 2,
+            total_thought_tokens: 0,
+            total_tokens: 9,
+          },
+        },
+      },
+      stop(0),
+      completed,
+    ])
+    expect(terminalUsage(result)).toEqual({
+      input_tokens: 7,
+      output_tokens: 2,
+      total_tokens: 9,
+      input_tokens_details: { cached_tokens: 4 },
+      output_tokens_details: { reasoning_tokens: 0 },
+    })
+  })
+
+  test("keeps the latest cumulative snapshot from step.stop and ignores step_usage", () => {
+    const result = run([
+      created,
+      start(0),
+      delta(0, { type: "text", text: "Hi" }),
+      {
+        ...stop(0),
+        step_usage: { total_input_tokens: 999, total_tokens: 999 },
+        usage: {
+          total_input_tokens: 20,
+          total_output_tokens: 5,
+          total_thought_tokens: 1,
+          total_tokens: 26,
+        },
+      },
+      completed,
+    ])
+    expect(terminalUsage(result)).toEqual({
+      input_tokens: 20,
+      output_tokens: 6,
+      total_tokens: 26,
+      output_tokens_details: { reasoning_tokens: 1 },
+    })
+  })
+
+  test("lets explicit terminal usage override retained snapshots without summing", () => {
+    const result = run([
+      created,
+      start(0),
+      {
+        event_type: "step.delta",
+        index: 0,
+        delta: { type: "text", text: "Hi" },
+        metadata: {
+          total_usage: { total_input_tokens: 1, total_output_tokens: 1 },
+        },
+      },
+      stop(0),
+      {
+        ...completed,
+        interaction: {
+          ...completed.interaction,
+          usage: {
+            total_input_tokens: 50,
+            total_output_tokens: 10,
+            total_thought_tokens: 0,
+            total_tokens: 60,
+          },
+        },
+      },
+    ])
+    expect(terminalUsage(result)).toEqual({
+      input_tokens: 50,
+      output_tokens: 10,
+      total_tokens: 60,
+      output_tokens_details: { reasoning_tokens: 0 },
+    })
+  })
+
+  test("preserves known zero counters and reports absent usage as null", () => {
+    const zero = run([
+      created,
+      start(0),
+      {
+        event_type: "step.delta",
+        index: 0,
+        delta: { type: "text", text: "Hi" },
+        metadata: { total_usage: { total_cached_tokens: 0 } },
+      },
+      stop(0),
+      completed,
+    ])
+    expect(terminalUsage(zero)).toEqual({
+      input_tokens_details: { cached_tokens: 0 },
+    })
+    expect(
+      terminalUsage(run([created, start(0), stop(0), completed])),
+    ).toBeNull()
+  })
+
+  test("never invents a zero thought count to complete output_tokens", () => {
+    const result = run([
+      created,
+      start(0),
+      {
+        event_type: "step.delta",
+        index: 0,
+        delta: { type: "text", text: "Hi" },
+        metadata: { total_usage: { total_output_tokens: 3 } },
+      },
+      stop(0),
+      completed,
+    ])
+    expect(terminalUsage(result)).toEqual({})
+  })
+})
+
 describe("Interactions SSE failure boundaries", () => {
   test.each([
     "data: {bad}\n\n",
@@ -292,6 +428,23 @@ describe("Interactions SSE failure boundaries", () => {
     expect((error.at(-1)?.response as Record<string, unknown>).error).toEqual({
       code: "quota",
       message: "exceeded",
+    })
+    const v1 = run([
+      created,
+      start(0),
+      {
+        ...completed,
+        interaction: {
+          ...completed.interaction,
+          status: "failed",
+          errors: [{ code: "quota", message: "exhausted" }],
+        },
+      },
+    ])
+    expect(v1.at(-1)?.type).toBe("response.failed")
+    expect((v1.at(-1)?.response as Record<string, unknown>).error).toEqual({
+      code: "quota",
+      message: "exhausted",
     })
     const mismatch = run([
       created,

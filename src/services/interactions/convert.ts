@@ -197,7 +197,36 @@ function decodeThought(value: unknown): JsonObject {
   }
 }
 
-function historyItem(item: JsonObject, calls: Map<string, string>): JsonObject {
+function toolResult(
+  item: JsonObject,
+  calls: Map<string, string>,
+  parentReferenced: boolean,
+): JsonObject {
+  const callId = string(item.call_id)
+  const known = calls.get(callId)
+  const explicit = item.name === undefined ? undefined : string(item.name)
+  if (explicit !== undefined && known !== undefined && explicit !== known)
+    throw new InteractionsConversionError("Conflicting tool result name")
+  const name = known ?? explicit
+  // previous_interaction_id continuation keeps the call history server side, so
+  // an orphaned result may legitimately omit the tool name.
+  if (name === undefined && !parentReferenced)
+    throw new InteractionsConversionError(
+      "Tool result requires call history or explicit name",
+    )
+  return {
+    type: "function_result",
+    call_id: callId,
+    ...(name === undefined ? {} : { name }),
+    result: [{ type: "text", text: messageText(item.output) }],
+  }
+}
+
+function historyItem(
+  item: JsonObject,
+  calls: Map<string, string>,
+  parentReferenced: boolean,
+): JsonObject {
   switch (item.type) {
     case undefined:
     case "message": {
@@ -225,20 +254,7 @@ function historyItem(item: JsonObject, calls: Map<string, string>): JsonObject {
     case "function_call_output":
     case "custom_tool_call_output": {
       fields(item, "type id call_id name output status")
-      const callId = string(item.call_id)
-      const name = calls.get(callId) ?? item.name
-      if (name === undefined)
-        throw new InteractionsConversionError(
-          "Tool result requires call history or explicit name",
-        )
-      if (item.name !== undefined && item.name !== name)
-        throw new InteractionsConversionError("Conflicting tool result name")
-      return {
-        type: "function_result",
-        call_id: callId,
-        name: string(name),
-        result: [{ type: "text", text: messageText(item.output) }],
-      }
+      return toolResult(item, calls, parentReferenced)
     }
     case "reasoning": {
       fields(item, "type id summary encrypted_content status")
@@ -255,6 +271,7 @@ function historyItem(item: JsonObject, calls: Map<string, string>): JsonObject {
 function history(
   input: z.infer<typeof requestSchema>["input"],
   instructions?: string,
+  parentReferenced = false,
 ) {
   const inputItems =
     typeof input === "string" ? [{ role: "user", content: input }] : input
@@ -270,7 +287,7 @@ function history(
         )
       system.push(messageText(item.content))
     } else {
-      steps.push(historyItem(item, calls))
+      steps.push(historyItem(item, calls, parentReferenced))
     }
   }
   return { steps, system }
@@ -285,7 +302,12 @@ export function convertResponsesRequestToInteractions(
   customTools: Set<string>
 } {
   const request = parse(requestSchema, value)
-  const { steps, system } = history(request.input, request.instructions)
+  const parentId = request.previous_response_id ?? undefined
+  const { steps, system } = history(
+    request.input,
+    request.instructions,
+    parentId !== undefined,
+  )
   const tools = (request.tools ?? []).map((tool) => toolDefinition(tool))
   const names = new Set(tools.map((tool) => string(tool.name)))
   if (names.size !== tools.length)
@@ -297,11 +319,7 @@ export function convertResponsesRequestToInteractions(
   }
   if (system.length > 0) body.system_instruction = system.join("\n\n")
   if (request.stream !== undefined) body.stream = request.stream
-  if (
-    request.previous_response_id !== null
-    && request.previous_response_id !== undefined
-  )
-    body.previous_interaction_id = request.previous_response_id
+  if (parentId !== undefined) body.previous_interaction_id = parentId
   if (request.tools !== undefined) body.tools = tools
   const generation = generationConfig(request, names)
   if (Object.keys(generation).length > 0) body.generation_config = generation
@@ -423,6 +441,30 @@ function usage(value: unknown): JsonObject | null {
   return result
 }
 
+function failureError(interaction: JsonObject): JsonObject {
+  const diagnostics =
+    Array.isArray(interaction.errors) ? interaction.errors : []
+  let diagnostic: JsonObject | undefined
+  for (const entry of diagnostics) {
+    if (entry !== null && typeof entry === "object" && !Array.isArray(entry)) {
+      diagnostic = entry as JsonObject
+      break
+    }
+  }
+  if (diagnostic === undefined && interaction.error !== undefined)
+    diagnostic = object(interaction.error)
+  return {
+    code:
+      typeof diagnostic?.code === "string" && diagnostic.code !== "" ?
+        diagnostic.code
+      : "upstream_error",
+    message:
+      typeof diagnostic?.message === "string" && diagnostic.message !== "" ?
+        diagnostic.message
+      : "Interaction failed",
+  }
+}
+
 export function convertInteractionsResponseToResponses(
   value: unknown,
   options: ConversionOptions = {},
@@ -466,19 +508,11 @@ export function convertInteractionsResponseToResponses(
     model: string(options.requestedModel ?? interaction.model),
     status,
     output,
-    error:
-      status === "failed" ?
-        structuredClone(
-          interaction.error ?? {
-            code: "upstream_error",
-            message: "Interaction failed",
-          },
-        )
-      : null,
-    incomplete_details:
-      status === "incomplete" ?
-        { reason: sourceStatus === "cancelled" ? "cancelled" : "unknown" }
-      : null,
+    error: status === "failed" ? failureError(interaction) : null,
+    // Interactions exposes no legal Responses incomplete reason, and the
+    // Responses enum accepts only max_output_tokens, max_messages,
+    // content_filter or steered. Report incompleteness through status alone.
+    incomplete_details: null,
     usage: usage(interaction.usage),
   }
 }

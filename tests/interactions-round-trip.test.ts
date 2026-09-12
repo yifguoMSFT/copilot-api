@@ -196,3 +196,63 @@ describe("Offline converter round trips", () => {
     expect(a.body).not.toHaveProperty("session-id")
   })
 })
+
+describe("Terminal status parity", () => {
+  const partial = {
+    type: "model_output",
+    content: [{ type: "text", text: "partial answer" }],
+  }
+  const terminalSnapshot = (status: string): JsonObject => ({
+    id: "v1_terminal",
+    model: "gemini",
+    status,
+    steps: [partial],
+    usage: {
+      total_input_tokens: 3,
+      total_output_tokens: 1,
+      total_thought_tokens: 0,
+      total_tokens: 4,
+    },
+  })
+  const replyEvents = (interaction: JsonObject): Array<JsonObject> => [
+    {
+      event_type: "interaction.created",
+      interaction: { id: "v1_terminal" },
+    },
+    { event_type: "step.start", index: 0, step: partial },
+    { event_type: "step.stop", index: 0 },
+    { event_type: "interaction.completed", interaction },
+  ]
+
+  test.each([
+    ["completed", "response.completed"],
+    ["failed", "response.failed"],
+    ["incomplete", "response.incomplete"],
+    ["cancelled", "response.incomplete"],
+  ])("JSON and SSE agree for a %s interaction", (status, eventType) => {
+    const interaction = terminalSnapshot(status)
+    const stream = createInteractionsEventStream(options)
+    let wire = ""
+    for (const event of replyEvents(interaction))
+      wire += stream.push(encode(event))
+    wire += stream.flush()
+    const events = parseEvents(wire)
+    expect(events.at(-1)?.type).toBe(eventType)
+    const json = convertInteractionsResponseToResponses(interaction, options)
+    expect(events.at(-1)?.response).toEqual(json)
+    expect(json.incomplete_details).toBeNull()
+    expect(json.usage).toEqual({
+      input_tokens: 3,
+      output_tokens: 1,
+      total_tokens: 4,
+      output_tokens_details: { reasoning_tokens: 0 },
+    })
+    const output = json.output as Array<JsonObject>
+    expect(output).toHaveLength(1)
+    expect(output[0].content).toEqual([
+      { type: "output_text", text: "partial answer", annotations: [] },
+    ])
+    expect(output[0].status).toBe("completed")
+    expect(json.status).toBe(status === "cancelled" ? "incomplete" : status)
+  })
+})
