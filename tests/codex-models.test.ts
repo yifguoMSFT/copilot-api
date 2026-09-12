@@ -418,6 +418,48 @@ test("keeps a local alias bare while the Codex provider is enabled", () => {
     "gpt-5.6-luna(copilot)",
     "codex-auto-review",
   ])
+  // Approvals must leave the session model behind, otherwise the reviewer
+  // spends the Copilot or DeepSeek quota instead of the Codex login's.
+  expect(models.find((model) => model.slug === "gpt-5.6-luna(codex)")) //
+    .toMatchObject({ auto_review_model_override: "codex-auto-review" })
+  expect(models.find((model) => model.slug === "gpt-5.6-luna(copilot)")) //
+    .toMatchObject({ auto_review_model_override: "codex-auto-review" })
+  expect(models.find((model) => model.slug === "codex-auto-review")) //
+    .not.toHaveProperty("auto_review_model_override")
+})
+
+test("leaves the reviewer on the session model while the Codex provider is off", () => {
+  const base = {
+    customModels: [],
+    entries: new Map([
+      ["gpt-5.6-luna", { slug: "gpt-5.6-luna", display_name: "Luna" }],
+      [
+        "codex-auto-review",
+        { slug: "codex-auto-review", display_name: "Codex Auto Review" },
+      ],
+    ]),
+    extensionModels: [],
+    metadata: {},
+    officialModels: ["gpt-5.6-luna", "codex-auto-review"],
+  }
+  const config: RuntimeConfig = {
+    environment: "test",
+    providers: {
+      ...defaultProviderConfig().providers,
+      codex: { ...defaultProviderConfig().providers.codex, enabled: false },
+    },
+  }
+  const published = buildPublishedModels({
+    catalog: base.entries,
+    config,
+    officialModels: base.officialModels,
+  })
+
+  const models = buildCatalogEntries({ base, published })
+
+  expect(models.some((model) => "auto_review_model_override" in model)).toBe(
+    false,
+  )
 })
 
 test("publishes one suffixed definition per serving provider", async () => {

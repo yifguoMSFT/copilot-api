@@ -15,6 +15,13 @@ import { formatSourceModel, parseSourceModel } from "./model-sources"
 const CATALOG_URL =
   "https://raw.githubusercontent.com/openai/codex/refs/heads/main/codex-rs/models-manager/models.json"
 
+/**
+ * Reviewer id the Codex client asks for. Without an explicit override the
+ * client reviews with the session's own model, so approvals would spend that
+ * provider's quota instead of the Codex login's.
+ */
+const AUTO_REVIEW_MODEL = "codex-auto-review"
+
 const catalogSchema = z.looseObject({
   models: z.array(z.looseObject({ slug: z.string().min(1) })),
 })
@@ -280,7 +287,23 @@ export function buildCatalogEntries(options: {
       entries.push(mapped)
     }
   }
-  return sortCatalogEntries(entries)
+  return sortCatalogEntries(
+    base.entries.has(AUTO_REVIEW_MODEL) ?
+      entries.map((entry) => withAutoReviewOverride(entry))
+    : entries,
+  )
+}
+
+/**
+ * Keeps the reviewer on the Codex login for every selectable model. The alias
+ * entry itself stays bare; it is the target of the override, not a source of
+ * one.
+ */
+function withAutoReviewOverride(entry: CodexCatalogEntry): CodexCatalogEntry {
+  const slug = String(entry.slug)
+  if (isModelAlias(slug)) return entry
+  if (typeof entry.auto_review_model_override === "string") return entry
+  return { ...entry, auto_review_model_override: AUTO_REVIEW_MODEL }
 }
 
 /** Keep the file order and Codex's priority-based picker order consistent. */
