@@ -67,6 +67,19 @@ test("publishes nothing extra while the Codex provider is disabled", () => {
   expect(published.entries.size).toBe(0)
 })
 
+test("never publishes a source copy of a local alias", () => {
+  const published = buildPublishedModels({
+    config: configWith({ codex: enabledCodex() }),
+    officialModels: ["gpt-5.6-luna", "codex-auto-review"],
+    copilotModels: ["gpt-5.6-luna", "codex-auto-review"],
+  })
+
+  expect([...published.entries.keys()]).toEqual([
+    "gpt-5.6-luna(copilot)",
+    "gpt-5.6-luna(codex)",
+  ])
+})
+
 test("publishes one suffixed entry per provider that serves the model", () => {
   const published = buildPublishedModels({
     config: configWith({ codex: enabledCodex() }),

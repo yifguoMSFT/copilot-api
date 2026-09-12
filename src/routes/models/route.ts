@@ -19,11 +19,14 @@ modelRoutes.get("/", async (c) => {
       await cacheModels()
     }
 
-    const suffixedBaseIds = new Set(
-      [...(state.publishedModels?.entries.values() ?? [])].map(
+    // Bare ids that another entry already covers: a base model that has
+    // per-source copies, or an alias that is republished from its target.
+    const hiddenBareIds = new Set([
+      ...[...(state.publishedModels?.entries.values() ?? [])].map(
         (entry) => entry.baseModel,
       ),
-    )
+      ...modelAliasEntries.map(([alias]) => alias),
+    ])
 
     const copilotModels =
       state.models?.data.flatMap((model) => {
@@ -46,7 +49,7 @@ modelRoutes.get("/", async (c) => {
 
         // A model both providers serve is reachable only through its source
         // suffixed ids, so the bare entry is not republished here.
-        return suffixedBaseIds.has(model.id) ? aliases : [modelData, ...aliases]
+        return hiddenBareIds.has(model.id) ? aliases : [modelData, ...aliases]
       }) ?? []
     const deepSeekModels =
       state.runtimeConfig?.providers.deepseek.enabled === true ?

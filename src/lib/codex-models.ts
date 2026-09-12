@@ -8,6 +8,7 @@ import { deepSeekCodexModels } from "~/providers/deepseek/models"
 import type { ModelSource, PublishedModels } from "./model-sources"
 
 import { HTTPError } from "./error"
+import { isModelAlias } from "./model-aliases"
 import { addModelSeparators, isModelSeparator } from "./model-separators"
 import { formatSourceModel, parseSourceModel } from "./model-sources"
 
@@ -263,8 +264,9 @@ export function buildCatalogEntries(options: {
     const variants = variantsByBase.get(slug)
     if (variants === undefined) {
       // A model no enabled provider serves is not advertised; extension
-      // entries stay because another provider owns their id.
-      if (extensions.has(slug)) entries.push(entry)
+      // entries stay because another provider owns their id, and an alias
+      // stays bare because it is never published per source.
+      if (extensions.has(slug) || isModelAlias(slug)) entries.push(entry)
       continue
     }
     for (const variant of variants) {

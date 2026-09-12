@@ -390,6 +390,36 @@ test("keeps custom-only slugs separate from the official model set", async () =>
   expect(base.customModels).toEqual(["local-passthrough"])
 })
 
+test("keeps a local alias bare while the Codex provider is enabled", () => {
+  const base = {
+    customModels: [],
+    entries: new Map([
+      ["gpt-5.6-luna", { slug: "gpt-5.6-luna", display_name: "Luna" }],
+      [
+        "codex-auto-review",
+        { slug: "codex-auto-review", display_name: "Codex Auto Review" },
+      ],
+    ]),
+    extensionModels: [],
+    metadata: {},
+    officialModels: ["gpt-5.6-luna", "codex-auto-review"],
+  }
+  const published = buildPublishedModels({
+    catalog: base.entries,
+    config: codexEnabledConfig(),
+    copilotModels: ["gpt-5.6-luna", "codex-auto-review"],
+    officialModels: base.officialModels,
+  })
+
+  const models = buildCatalogEntries({ base, published })
+
+  expect(models.map((model) => model.slug)).toEqual([
+    "gpt-5.6-luna(codex)",
+    "gpt-5.6-luna(copilot)",
+    "codex-auto-review",
+  ])
+})
+
 test("publishes one suffixed definition per serving provider", async () => {
   const { base } = await baseCatalogFixture()
   const config = codexEnabledConfig()

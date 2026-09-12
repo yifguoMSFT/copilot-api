@@ -123,6 +123,12 @@ describe("model catalogue", () => {
     // The unrelated Copilot model and the explicit alias stay reachable.
     expect(ids).toContain("gpt-copilot")
     expect(ids).toContain("codex-auto-review")
+    // The alias is never republished per source, so only one bare id exists.
+    expect(
+      ids.map(String).some((id) => id.startsWith("codex-auto-review(")),
+    ).toBe(false)
+    expect(ids.map(String).filter((id) => id === "codex-auto-review")) //
+      .toHaveLength(1)
     expect(data.find((model) => model.id === "gpt-5.6-luna(codex)")) //
       .toMatchObject({
         owned_by: "codex",

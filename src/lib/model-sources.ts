@@ -3,6 +3,7 @@ import type { ModelProvider } from "./model-routing"
 import type { RuntimeConfig } from "./runtime-config"
 
 import { HttpStatusError } from "./error"
+import { isModelAlias } from "./model-aliases"
 
 /**
  * Source suffixes identify which upstream serves a model that more than one
@@ -129,9 +130,15 @@ export function buildPublishedModels(
     return whitelist.includes(baseId)
   }
 
+  // An alias is a local shorthand for one upstream model, never a second
+  // source, so publishing a suffixed copy of it would offer a duplicate.
+  const isPublishableBase = (baseId: string): boolean =>
+    !deepSeekModels.has(baseId)
+    && !containsSourceSuffix(baseId)
+    && !isModelAlias(baseId)
+
   for (const baseId of [...official, ...custom]) {
-    if (deepSeekModels.has(baseId)) continue
-    if (containsSourceSuffix(baseId)) continue
+    if (!isPublishableBase(baseId)) continue
 
     const capabilities = input.catalog?.get(baseId)
     const displayName =
