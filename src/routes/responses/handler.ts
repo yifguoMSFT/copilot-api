@@ -190,11 +190,6 @@ const logUpstreamReady = (
 
 const formatModelLabel = (requestedModel?: string): string => {
   if (requestedModel === undefined) return "unknown model"
-  if (
-    requestedModel === "codex-auto-review"
-    && state.runtimeConfig?.providers.codex.enabled
-  )
-    return requestedModel
 
   const resolvedModel = resolveModelAlias(requestedModel)
   if (resolvedModel === requestedModel) return requestedModel

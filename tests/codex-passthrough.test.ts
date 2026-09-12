@@ -101,10 +101,10 @@ const forwarded = (index = 0): [string, RequestInit] =>
   fetchMock.mock.calls[index] as [string, RequestInit]
 
 describe("Codex passthrough forwarding", () => {
-  test("sends approval to Codex unchanged and strips encrypted-only reasoning", async () => {
+  test("strips encrypted-only reasoning before forwarding to Codex", async () => {
     const response = await post(
       JSON.stringify({
-        model: "codex-auto-review",
+        model: CODEX_MODEL,
         input: [
           {
             type: "reasoning",
@@ -118,12 +118,26 @@ describe("Codex passthrough forwarding", () => {
     const [url, init] = forwarded()
     expect(url).toBe("https://chatgpt.com/backend-api/codex/responses")
     expect(await new Response(init.body).json()).toEqual({
-      model: "codex-auto-review",
+      model: "codex-test-model",
       input: [{ type: "reasoning", summary: [] }],
     })
     expect(new Headers(init.headers).get("authorization")).toBe(
       "Bearer codex-access-token",
     )
+  })
+
+  test("sends codex-auto-review to Copilot Luna while Codex is enabled", async () => {
+    state.copilotToken = "copilot-token"
+    state.vsCodeVersion = "1.0.0"
+
+    const response = await post(JSON.stringify({ model: "codex-auto-review" }))
+
+    expect(response.status).toBe(200)
+    const [url, init] = forwarded()
+    expect(url).not.toContain("chatgpt.com")
+    expect(await new Response(init.body).json()).toEqual({
+      model: "gpt-5.6-luna",
+    })
   })
   test("strips the source suffix and posts the rest of the payload", async () => {
     const body = JSON.stringify({

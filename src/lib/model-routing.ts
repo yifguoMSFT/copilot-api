@@ -30,9 +30,6 @@ export function resolveModelRoute(
       "model_separator",
     )
   }
-  if (model === "codex-auto-review" && config.providers.codex.enabled) {
-    return { provider: "codex", requestedModel: model, upstreamModel: model }
-  }
   // A published source-suffixed id decides both the upstream and the model the
   // upstream receives; anything else falls through to the legacy paths below.
   const publishedEntry = published?.entries.get(model)

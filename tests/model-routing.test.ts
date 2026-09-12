@@ -35,14 +35,14 @@ test.each(["----codex----", "----deepseek----", "----copilot----"])(
 )
 
 test.each([true, false])(
-  "approval routing follows Codex enabled=%s",
+  "codex-auto-review always stays on Copilot Luna (Codex enabled=%s)",
   (enabled) => {
     const config = baseConfig()
     config.providers.codex.enabled = enabled
     expect(resolveModelRoute("codex-auto-review", config)).toEqual({
-      provider: enabled ? "codex" : "copilot",
+      provider: "copilot",
       requestedModel: "codex-auto-review",
-      upstreamModel: enabled ? "codex-auto-review" : "gpt-5.6-luna",
+      upstreamModel: "gpt-5.6-luna",
     })
   },
 )
