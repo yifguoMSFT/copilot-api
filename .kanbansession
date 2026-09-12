@@ -1,9 +1,9 @@
 {
   "sessions": {
     "01a0939a-6997-7291-851e-f6d25aed593b": {
-      "blueprint_path": "I:\\Cache\\workshop\\copilot-api\\interactions-state-preservation-fixes.kanban.json",
-      "last_execution_fingerprint": "9fcc59f1dcc6cc5e6f2e6ea74a7a11f3ec8668a56d73391421c96fc217ec6d5b",
-      "registration_id": "1789207288660259700",
+      "blueprint_path": "I:\\Cache\\workshop\\copilot-api\\interactions-conversion-fidelity-rework.kanban.json",
+      "last_execution_fingerprint": "e3fd0a204a56080089a68d940ac164a8e41f2078ae3dcdb27f55cca04627a8a0",
+      "registration_id": "1789208485716272800",
       "unchanged_stop_count": 0
     }
   }
