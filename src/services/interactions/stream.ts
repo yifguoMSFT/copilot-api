@@ -214,10 +214,12 @@ export class InteractionsEventStream {
       index,
       outputIndex: this.nextOutputIndex++,
       step,
-      args:
-        step.arguments === undefined ?
-          ""
-        : JSON.stringify(object(step.arguments)),
+      // Streaming arguments arrive as `arguments_delta` text. The object on
+      // `step.start` is a required-field placeholder (`{}`) in that mode, so
+      // the text buffer starts empty and only falls back to the object when
+      // no delta is sent. Verified against live v1 traffic: a 300-character
+      // call still arrives as a single delta holding the whole JSON text.
+      args: "",
       parts: [],
       stopped: false,
       done: false,
@@ -360,7 +362,10 @@ export class InteractionsEventStream {
   private materialize(state: StepState): JsonObject {
     const step = { ...state.step }
     if (step.type === "function_call")
-      step.arguments = parseArguments(state.args)
+      step.arguments =
+        state.args === "" ?
+          object(state.step.arguments ?? {})
+        : parseArguments(state.args)
     else
       step[step.type === "thought" ? "summary" : "content"] = state.parts.map(
         (text) => ({ type: "text", text }),

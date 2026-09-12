@@ -10,6 +10,17 @@ export class InteractionsConversionError extends Error {
 }
 
 export const MAX_DATA_BYTES = 1_048_576
+/**
+ * Functions cannot be grouped upstream, so a Responses namespace tool group is
+ * flattened into one Function per nested tool. The qualified name is reversed
+ * on the way back using the namespaces declared by the same request.
+ */
+export const NAMESPACE_SEPARATOR = "__"
+
+export function qualifiedToolName(namespace: string, name: string): string {
+  return `${namespace}${NAMESPACE_SEPARATOR}${name}`
+}
+
 const textContent = z.strictObject({
   type: z.literal("text"),
   text: z.string(),
@@ -19,7 +30,7 @@ const thoughtSchema = z.strictObject({
   signature: z.string().optional(),
   summary: z.array(textContent).optional(),
 })
-const requestSchema = z.strictObject({
+const requestSchema = z.object({
   model: z.string().min(1),
   input: z.union([z.string(), z.array(z.record(z.string(), z.unknown()))]),
   instructions: z.string().optional(),
@@ -30,17 +41,19 @@ const requestSchema = z.strictObject({
   tools: z.array(z.record(z.string(), z.unknown())).optional(),
   tool_choice: z.unknown().optional(),
   reasoning: z
-    .strictObject({
+    .object({
       effort: z.enum(["minimal", "low", "medium", "high"]).optional(),
       summary: z.literal("auto").optional(),
     })
     .optional(),
   text: z
-    .strictObject({
-      format: z.strictObject({ type: z.literal("text") }).optional(),
+    .object({
+      format: z.object({ type: z.literal("text") }).optional(),
     })
     .optional(),
   include: z.array(z.literal("reasoning.encrypted_content")).optional(),
+  parallel_tool_calls: z.boolean().optional(),
+  client_metadata: z.record(z.string(), z.unknown()).optional(),
   prompt_cache_key: z.string().optional(),
 })
 
@@ -48,6 +61,8 @@ export interface ConversionOptions {
   upstreamModel?: string
   requestedModel?: string
   customTools?: ReadonlySet<string>
+  /** Upstream Function name to the Responses namespace it was flattened from. */
+  toolNamespaces?: ReadonlyMap<string, string>
   metadata?: Readonly<Record<string, string>>
   createdAt?: number
 }
@@ -87,25 +102,14 @@ export function parseArguments(value: string): JsonObject {
   }
 }
 
-function fields(item: JsonObject, allowed: string): void {
-  for (const key of Object.keys(item)) {
-    if (!allowed.split(" ").includes(key)) {
-      throw new InteractionsConversionError(`Unsupported field: ${key}`)
-    }
-  }
-}
-
 function messageText(content: unknown): string {
   if (typeof content === "string") return content
   return parse(
     z.array(
-      z
-        .object({
-          type: z.enum(["input_text", "output_text"]),
-          text: z.string(),
-          annotations: z.array(z.unknown()).max(0).optional(),
-        })
-        .strict(),
+      z.object({
+        type: z.enum(["input_text", "output_text"]),
+        text: z.string(),
+      }),
     ),
     content,
   )
@@ -114,7 +118,6 @@ function messageText(content: unknown): string {
 }
 
 function toolDefinition(tool: JsonObject): JsonObject {
-  fields(tool, "type name description parameters strict format")
   const name = parse(z.string().min(1), tool.name)
   if (
     tool.strict !== undefined
@@ -128,7 +131,7 @@ function toolDefinition(tool: JsonObject): JsonObject {
     result.description = string(tool.description)
   if (tool.type === "custom") {
     if (tool.format !== undefined) {
-      parse(z.strictObject({ type: z.literal("text") }), tool.format)
+      parse(z.object({ type: z.literal("text") }), tool.format)
     }
     if (tool.parameters !== undefined) {
       throw new InteractionsConversionError(
@@ -162,15 +165,21 @@ function toolChoice(value: unknown, names: Set<string>): unknown {
     return value === "required" ? "any" : value
   }
   const choice = parse(
-    z.strictObject({
+    z.object({
       type: z.enum(["function", "custom"]),
       name: z.string(),
+      // Declared only when the tool came from a namespace group.
+      namespace: z.string().optional(),
     }),
     value,
   )
-  if (!names.has(choice.name))
+  const name =
+    choice.namespace === undefined ?
+      choice.name
+    : qualifiedToolName(choice.namespace, choice.name)
+  if (!names.has(name))
     throw new InteractionsConversionError("Unknown chosen tool")
-  return { allowed_tools: { mode: "any", tools: [choice.name] } }
+  return { allowed_tools: { mode: "any", tools: [name] } }
 }
 
 function decodeThought(value: unknown): JsonObject {
@@ -204,7 +213,10 @@ function toolResult(
 ): JsonObject {
   const callId = string(item.call_id)
   const known = calls.get(callId)
-  const explicit = item.name === undefined ? undefined : string(item.name)
+  const explicit =
+    item.name === undefined ?
+      undefined
+    : toolCallName(item.name, item.namespace)
   if (explicit !== undefined && known !== undefined && explicit !== known)
     throw new InteractionsConversionError("Conflicting tool result name")
   const name = known ?? explicit
@@ -222,6 +234,14 @@ function toolResult(
   }
 }
 
+/** Responses carries the namespace beside the name; upstream carries one string. */
+function toolCallName(name: unknown, namespace: unknown): string {
+  const bare = string(name)
+  return namespace === undefined ? bare : (
+      qualifiedToolName(string(namespace), bare)
+    )
+}
+
 function historyItem(
   item: JsonObject,
   calls: Map<string, string>,
@@ -230,7 +250,6 @@ function historyItem(
   switch (item.type) {
     case undefined:
     case "message": {
-      fields(item, "type id role content status")
       const role = parse(z.enum(["user", "assistant"]), item.role)
       return {
         type: role === "user" ? "user_input" : "model_output",
@@ -239,9 +258,11 @@ function historyItem(
     }
     case "function_call":
     case "custom_tool_call": {
-      fields(item, "type id call_id name arguments input status")
       const id = parse(z.string().min(1), item.call_id)
-      const name = parse(z.string().min(1), item.name)
+      const name = parse(
+        z.string().min(1),
+        toolCallName(item.name, item.namespace),
+      )
       if (calls.has(id))
         throw new InteractionsConversionError("Duplicate call_id")
       calls.set(id, name)
@@ -253,11 +274,9 @@ function historyItem(
     }
     case "function_call_output":
     case "custom_tool_call_output": {
-      fields(item, "type id call_id name output status")
       return toolResult(item, calls, parentReferenced)
     }
     case "reasoning": {
-      fields(item, "type id summary encrypted_content status")
       return decodeThought(item.encrypted_content)
     }
     default: {
@@ -266,6 +285,36 @@ function historyItem(
       )
     }
   }
+}
+
+const MODEL_TURN_STEPS = new Set(["model_output", "function_call", "thought"])
+
+/**
+ * Google rejects a model turn whose thought block is not its first step
+ * ("Model turns with thought summaries must start with a thought block").
+ * Codex appends the reasoning item after the message and tool calls it
+ * produced, so each model turn is emitted with its thought blocks first.
+ */
+function leadWithThoughts(steps: Array<JsonObject>): Array<JsonObject> {
+  const ordered: Array<JsonObject> = []
+  let turn: Array<JsonObject> = []
+  const endTurn = () => {
+    if (turn.length > 0)
+      ordered.push(
+        ...turn.filter((step) => step.type === "thought"),
+        ...turn.filter((step) => step.type !== "thought"),
+      )
+    turn = []
+  }
+  for (const step of steps) {
+    if (MODEL_TURN_STEPS.has(String(step.type))) turn.push(step)
+    else {
+      endTurn()
+      ordered.push(step)
+    }
+  }
+  endTurn()
+  return ordered
 }
 
 function history(
@@ -280,7 +329,6 @@ function history(
   const calls = new Map<string, string>()
   for (const item of inputItems) {
     if (item.role === "system" || item.role === "developer") {
-      fields(item, "type role content")
       if (steps.length > 0)
         throw new InteractionsConversionError(
           "Instruction in middle of history",
@@ -290,7 +338,43 @@ function history(
       steps.push(historyItem(item, calls, parentReferenced))
     }
   }
-  return { steps, system }
+  return { steps: leadWithThoughts(steps), system }
+}
+
+interface FlattenedTools {
+  definitions: Array<JsonObject>
+  custom: Set<string>
+  namespaces: Map<string, string>
+}
+
+function flattenTools(tools: ReadonlyArray<JsonObject>): FlattenedTools {
+  const result: FlattenedTools = {
+    definitions: [],
+    custom: new Set(),
+    namespaces: new Map(),
+  }
+  for (const tool of tools) {
+    if (tool.type === "namespace") {
+      const namespace = parse(z.string().min(1), tool.name)
+      const nested = parse(
+        z.array(z.record(z.string(), z.unknown())),
+        tool.tools,
+      )
+      for (const child of nested) {
+        const name = qualifiedToolName(
+          namespace,
+          parse(z.string().min(1), child.name),
+        )
+        result.definitions.push(toolDefinition({ ...child, name }))
+        result.namespaces.set(name, namespace)
+        if (child.type === "custom") result.custom.add(name)
+      }
+      continue
+    }
+    result.definitions.push(toolDefinition(tool))
+    if (tool.type === "custom") result.custom.add(string(tool.name))
+  }
+  return result
 }
 
 export function convertResponsesRequestToInteractions(
@@ -300,15 +384,21 @@ export function convertResponsesRequestToInteractions(
   body: JsonObject
   metadata: Record<string, string>
   customTools: Set<string>
+  toolNamespaces: Map<string, string>
 } {
   const request = parse(requestSchema, value)
+  if (request.parallel_tool_calls === false)
+    throw new InteractionsConversionError(
+      "parallel_tool_calls=false has no Interactions equivalent",
+    )
   const parentId = request.previous_response_id ?? undefined
   const { steps, system } = history(
     request.input,
     request.instructions,
     parentId !== undefined,
   )
-  const tools = (request.tools ?? []).map((tool) => toolDefinition(tool))
+  const flattened = flattenTools(request.tools ?? [])
+  const tools = flattened.definitions
   const names = new Set(tools.map((tool) => string(tool.name)))
   if (names.size !== tools.length)
     throw new InteractionsConversionError("Duplicate tool name")
@@ -336,11 +426,8 @@ export function convertResponsesRequestToInteractions(
   return {
     body,
     metadata,
-    customTools: new Set(
-      (request.tools ?? [])
-        .filter((tool) => tool.type === "custom")
-        .map((tool) => string(tool.name)),
-    ),
+    customTools: flattened.custom,
+    toolNamespaces: flattened.namespaces,
   }
 }
 
@@ -372,15 +459,22 @@ export function convertInteractionStep(
     }
     case "function_call": {
       const callId = parse(z.string().min(1), step.id)
-      const name = parse(z.string().min(1), step.name)
+      const upstream = parse(z.string().min(1), step.name)
+      const namespace = options.toolNamespaces?.get(upstream)
+      const name =
+        namespace === undefined ? upstream : (
+          upstream.slice(namespace.length + NAMESPACE_SEPARATOR.length)
+        )
+      const grouped = namespace === undefined ? {} : { namespace }
       const args = object(step.arguments)
-      if (options.customTools?.has(name)) {
-        const custom = parse(z.strictObject({ input: z.string() }), args)
+      if (options.customTools?.has(upstream)) {
+        const custom = parse(z.object({ input: z.string() }), args)
         return {
           type: "custom_tool_call",
           id,
           call_id: callId,
           name,
+          ...grouped,
           input: custom.input,
           status: "completed",
         }
@@ -390,6 +484,7 @@ export function convertInteractionStep(
         id,
         call_id: callId,
         name,
+        ...grouped,
         arguments: JSON.stringify(args),
         status: "completed",
       }
@@ -499,7 +594,9 @@ export function convertInteractionsResponseToResponses(
   if (created !== undefined && !Number.isFinite(created))
     throw new InteractionsConversionError("Invalid created timestamp")
   return {
-    id: string(interaction.id),
+    // Live v1 JSON responses omit id entirely; the SSE path already reports an
+    // empty id in that case, so both directions stay consistent.
+    id: interaction.id === undefined ? "" : string(interaction.id),
     object: "response",
     created_at:
       created === undefined ?

@@ -24,22 +24,22 @@ Codex CLI → HTTP POST http://127.0.0.1:4830/v1/responses → 现有转换函�
 - 页面 banner 明确给出 gemini-3.8-flash，但枚举与示例存在滞后；第一步必须用该模型做最小请求。失败记录原始 HTTP 状态和脱敏诊断，不换成 3.6、3.7 或 v1beta。
 - 当前没有可供调用的桥接服务；以下脚本名、配置与命令是待实现方案，不是现成功能。
 
-## 本地密钥 placeholder
+## 本地密钥文件
 
-按用户要求先保留占位项，不搜索更多凭据，不复用 OAuth token。
+按用户要求不复用 OAuth token，也不做凭据发现器。
 
-建议新增 scripts/interactions-codex-live.example.json：
+- 模板（进版本控制）：scripts/interactions-codex-live.example.json
 
 ```json
 {
-  "geminiKeySource": {
-    "path": "<LOCAL_GEMINI_CONFIG_PATH>",
-    "field": "<GEMINI_API_KEY_FIELD>"
-  }
+  "gemini_api_key": "<your Gemini API key>"
 }
 ```
 
-联调时在版本控制外的本地副本填写真实配置路径和字段。初版只需读取选定 JSON 配置的点分字段路径，使用普通属性访问，不用 eval；若实际来源是其他格式，确认后实现那个格式即可，不做通用凭据发现器。缺文件、缺字段、空串或 placeholder 必须在监听及出网前失败。
+- 实际文件（版本控制外，被 .gitignore 的 `*.local` 覆盖）：scripts/interactions-codex-live.local，同一结构，把值换成真实 key。
+- 可用环境变量 `INTERACTIONS_KEY_FILE` 指向其他位置的同名 JSON。
+
+桥接只按顶层字段 `gemini_api_key` 取值，使用普通属性访问，不做路径间接跳转或点分字段解析。缺文件、非 JSON、缺字段、空串或 placeholder 必须在监听及出网前失败。
 
 Gemini key 仅由桥接进程读取并注入 x-goog-api-key。不得写入 Markdown、Codex config.toml、命令行参数、URL 或日志。不要把项目现有 deepseek.apiKey 当 Gemini key。脚本不调用现有 runtime-config，因其 schema 没有 Gemini 配置。
 

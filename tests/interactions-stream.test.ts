@@ -104,6 +104,39 @@ describe("Interactions SSE", () => {
     expect(output.map((item) => item.call_id)).toEqual(["c0", "c1"])
   })
 
+  test("restores a namespace on a streamed tool call", () => {
+    const stream = createInteractionsEventStream({
+      requestedModel: "client",
+      createdAt: 1,
+      toolNamespaces: new Map([["mcp__demo__lookup", "mcp__demo"]]),
+    })
+    const output = events(
+      stream.push(
+        encoder.encode(
+          frame(created)
+            + frame(
+              start(0, {
+                type: "function_call",
+                id: "c",
+                name: "mcp__demo__lookup",
+              }),
+            )
+            + frame(delta(0, { type: "arguments_delta", arguments: '{"q":1}' }))
+            + frame(stop(0))
+            + frame(completed),
+        ),
+      ) + stream.flush(),
+    )
+    const added = output.find(
+      (event) => event.type === "response.output_item.added",
+    )
+    expect(added?.item).toMatchObject({
+      type: "function_call",
+      name: "lookup",
+      namespace: "mcp__demo",
+    })
+  })
+
   test("supports every byte boundary, UTF-8, CRLF and multiline data", () => {
     const wire = [
       created,
@@ -204,6 +237,64 @@ describe("Interactions SSE", () => {
       type: "thought",
       signature: "late",
       summary: [{ type: "text", text: "thinking" }],
+    })
+  })
+})
+
+describe("Interactions SSE streamed tool arguments", () => {
+  test("ignores the empty step.start placeholder when arguments stream later", () => {
+    const result = run([
+      created,
+      start(0, {
+        type: "function_call",
+        id: "call_1",
+        name: "exec_command",
+        arguments: {},
+      }),
+      delta(0, {
+        type: "arguments_delta",
+        arguments: '{"cmd":"cat fixture.txt"}',
+      }),
+      stop(0),
+      completed,
+    ])
+    const done = result.find(
+      (event) => event.type === "response.function_call_arguments.done",
+    )
+    expect(done?.arguments).toBe('{"cmd":"cat fixture.txt"}')
+    const output = (result.at(-1)?.response as Record<string, unknown>)
+      .output as Array<Record<string, unknown>>
+    expect(output[0]).toMatchObject({
+      type: "function_call",
+      call_id: "call_1",
+      name: "exec_command",
+      arguments: '{"cmd":"cat fixture.txt"}',
+    })
+  })
+
+  test("keeps a zero-argument streamed call valid without any delta", () => {
+    const result = run([
+      created,
+      start(0, {
+        type: "function_call",
+        id: "call_2",
+        name: "list_files",
+        arguments: {},
+      }),
+      stop(0),
+      completed,
+    ])
+    const done = result.find(
+      (event) => event.type === "response.function_call_arguments.done",
+    )
+    expect(done?.arguments).toBe("{}")
+    const output = (result.at(-1)?.response as Record<string, unknown>)
+      .output as Array<Record<string, unknown>>
+    expect(output[0]).toMatchObject({
+      type: "function_call",
+      call_id: "call_2",
+      arguments: "{}",
+      status: "completed",
     })
   })
 })

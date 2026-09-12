@@ -224,6 +224,31 @@ describe("Terminal status parity", () => {
     { event_type: "interaction.completed", interaction },
   ]
 
+  test("both directions report an empty id when the live interaction omits it", () => {
+    const interaction: JsonObject = {
+      object: "interaction",
+      model: "gemini-3.8-flash",
+      status: "completed",
+      steps: [partial],
+    }
+    const stream = createInteractionsEventStream(options)
+    let wire = ""
+    for (const event of [
+      {
+        event_type: "interaction.created",
+        interaction: { status: "in_progress" },
+      },
+      { event_type: "step.start", index: 0, step: partial },
+      { event_type: "step.stop", index: 0 },
+      { event_type: "interaction.completed", interaction },
+    ])
+      wire += stream.push(encode(event))
+    wire += stream.flush()
+    const json = convertInteractionsResponseToResponses(interaction, options)
+    expect(json.id).toBe("")
+    expect(parseEvents(wire).at(-1)?.response).toEqual(json)
+  })
+
   test.each([
     ["completed", "response.completed"],
     ["failed", "response.failed"],
