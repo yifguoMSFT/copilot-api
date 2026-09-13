@@ -130,6 +130,41 @@ function canonical(value: unknown): string {
   return `{${fields.join(",")}}`
 }
 
+/**
+ * The model's opaque replay signature, in either spelling it can arrive in.
+ * A carried part holds one; the same content replayed by the client as its own
+ * Responses item does not, so the field has to stay out of the comparison.
+ */
+const SIGNATURE_FIELDS = ["thoughtSignature", "thought_signature"] as const
+
+/**
+ * A part reduced to what a Responses item can express. The upstream assigns
+ * its own `functionCall.id`, and a Responses `function_call` reports a
+ * synthesized `call_id` instead, so name and arguments are all that survive a
+ * round trip. The signature has no Responses counterpart at all.
+ */
+function partIdentity(part: JsonObject): JsonObject {
+  const copy = { ...part }
+  for (const field of SIGNATURE_FIELDS) delete copy[field]
+  const call = copy.functionCall
+  if (call !== null && typeof call === "object" && !Array.isArray(call)) {
+    const rest = { ...(call as JsonObject) }
+    delete rest.id
+    copy.functionCall = rest
+  }
+  return copy
+}
+
+/**
+ * Whether a carried part and a replayed part describe the same model output.
+ * The carried part is authoritative: it is the only side holding the signature
+ * the upstream validates, so it must win instead of being sent alongside a
+ * bare copy of itself.
+ */
+function isSamePart(carried: JsonObject, candidate: JsonObject): boolean {
+  return canonical(partIdentity(carried)) === canonical(partIdentity(candidate))
+}
+
 function decodeCarrier(value: unknown): Array<JsonObject> {
   const encoded = typeof value === "string" ? value : ""
   if (
@@ -245,10 +280,11 @@ function toolDefinition(tool: JsonObject, options?: ConversionOptions): JsonObje
   } else if (tool.type === "function") {
     if (tool.format !== undefined)
       throw new GenerateContentConversionError("Unsupported function format")
-    // The declared schema travels unchanged. Gemini documents an OpenAPI
-    // subset, but dropping keywords here would silently rewrite a client
-    // schema, so an unsupported keyword has to surface upstream instead.
-    result.parameters = options?.cleanSchema === true ? (cleanGeminiSchema(structuredClone(object(tool.parameters))) as JsonObject) : structuredClone(object(tool.parameters))
+    // The declared schema travels unchanged. It is declared as JSON Schema
+    // because the legacy `parameters` proto rejects `const` and any enum
+    // member that is not a string, while `parametersJsonSchema` accepts the
+    // schema as written and still types the arguments the model emits.
+    result.parametersJsonSchema = options?.cleanSchema === true ? (cleanGeminiSchema(structuredClone(object(tool.parameters))) as JsonObject) : structuredClone(object(tool.parameters))
   } else {
     throw new GenerateContentConversionError(
       `Unsupported tool: ${String(tool.type)}`,
@@ -264,17 +300,66 @@ interface FlattenedTools {
 
 /**
  * Codex declares tools it adds mid-conversation as `additional_tools` input
- * items. A top-level tool wins, so an extra declaration never replaces one
- * the request already made.
+ * items. A tool the request already declared wins, so an extra declaration
+ * never replaces one the request already made. A namespace is a group: only
+ * the children that are still new are kept, which is what lets a later batch
+ * extend a namespace the request already opened.
  */
+function collectToolNames(tool: JsonObject, names: Set<string>): void {
+  const name = typeof tool.name === "string" ? tool.name : undefined
+  if (name === undefined || name === "") return
+  if (tool.type !== "namespace") {
+    names.add(name)
+    return
+  }
+  if (!Array.isArray(tool.tools)) return
+  for (const child of tool.tools) {
+    const childName = childNameOf(child)
+    if (childName !== undefined) names.add(qualifiedToolName(name, childName))
+  }
+}
+
+/** Name of one namespace child, if the entry is shaped like a tool at all. */
+function childNameOf(child: unknown): string | undefined {
+  if (child === null || typeof child !== "object" || Array.isArray(child))
+    return undefined
+  const name = (child as JsonObject).name
+  return typeof name === "string" && name !== "" ? name : undefined
+}
+
+/** Drops the children a previous declaration already contributed. */
+function withoutDeclaredChildren(
+  tool: JsonObject,
+  declared: Set<string>,
+): JsonObject | undefined {
+  const name = typeof tool.name === "string" ? tool.name : undefined
+  if (name === undefined || name === "") return tool
+  if (tool.type !== "namespace") {
+    if (declared.has(name)) return undefined
+    declared.add(name)
+    return tool
+  }
+  if (!Array.isArray(tool.tools)) return tool
+  const children = tool.tools.filter((child) => {
+    const childName = childNameOf(child)
+    if (childName === undefined) return false
+    const upstream = qualifiedToolName(name, childName)
+    if (declared.has(upstream)) return false
+    declared.add(upstream)
+    return true
+  })
+  if (children.length === 0) return undefined
+  if (children.length === tool.tools.length) return tool
+  return { ...tool, tools: children }
+}
+
 function mergeAdditionalTools(
   tools: ReadonlyArray<JsonObject>,
   items: Request["input"],
 ): Array<JsonObject> {
   if (!Array.isArray(items)) return [...tools]
-  const declared = new Set(
-    tools.flatMap((tool) => (typeof tool.name === "string" ? [tool.name] : [])),
-  )
+  const declared = new Set<string>()
+  for (const tool of tools) collectToolNames(tool, declared)
   const merged = [...tools]
   for (const item of items) {
     if (item.type !== "additional_tools") continue
@@ -283,12 +368,8 @@ function mergeAdditionalTools(
       item.tools,
     )
     for (const tool of additional ?? []) {
-      const name = typeof tool.name === "string" ? tool.name : undefined
-      if (name !== undefined) {
-        if (declared.has(name)) continue
-        declared.add(name)
-      }
-      merged.push(tool)
+      const keep = withoutDeclaredChildren(tool, declared)
+      if (keep !== undefined) merged.push(keep)
     }
   }
   return merged
@@ -370,6 +451,14 @@ interface ContentsState extends Contents {
   calls: Map<string, string>
   // Parts already contributed by a carrier in the current model turn.
   carrierParts: Array<JsonObject>
+  // Calls of the newest model turn, in the order the client reported them.
+  // Upstream pairs the Nth response with the Nth call, so the order matters.
+  pendingCalls: Array<string>
+  // Tool results waiting for the rest of their call group, keyed by call id.
+  answers: Map<string, JsonObject>
+  // Instructions that arrived while a call was unanswered. A tool result has
+  // to follow its call, so the text waits for the group to be emitted.
+  heldInstruction: Array<JsonObject>
 }
 
 function pushPart(
@@ -399,10 +488,30 @@ function pushModelPart(state: ContentsState, parts: Array<JsonObject>): void {
   // A carried turn already holds these exact parts, so replaying both would
   // send the same call twice.
   const fresh = parts.filter(
-    (part) =>
-      !state.carrierParts.some((held) => canonical(held) === canonical(part)),
+    (part) => !state.carrierParts.some((held) => isSamePart(held, part)),
   )
   pushPart(state, "model", fresh)
+}
+
+/**
+ * A carrier holds the model turn verbatim, so it also supersedes any part the
+ * client already replayed as its own item. Clients that place the reasoning
+ * item after the call or message they belong to would otherwise duplicate the
+ * turn, because the carrier is only decoded when its item is reached.
+ */
+function dropCarriedParts(
+  state: ContentsState,
+  parts: Array<JsonObject>,
+): void {
+  const last = state.contents.at(-1)
+  if (last === undefined || last.role !== "model") return
+  const existing = last.parts as Array<JsonObject>
+  const kept = existing.filter(
+    (part) => !parts.some((held) => isSamePart(held, part)),
+  )
+  if (kept.length === existing.length) return
+  existing.length = 0
+  existing.push(...kept)
 }
 
 function callPart(item: JsonObject, calls: Map<string, string>): JsonObject {
@@ -422,6 +531,46 @@ function callPart(item: JsonObject, calls: Map<string, string>): JsonObject {
   return res
 }
 
+/**
+ * Emits the pending tool results once the model turn they answer is complete.
+ * Upstream matches the Nth response to the Nth call, so the results are
+ * written in call order even when the client reported them out of order. A
+ * call without a result is never answered with an invented one.
+ */
+function flushAnswers(state: ContentsState, final = false): void {
+  if (state.pendingCalls.length === 0) return
+  const complete = state.pendingCalls.every((id) => state.answers.has(id))
+  if (!complete && !final) return
+  const parts = state.pendingCalls.flatMap((id) => {
+    const part = state.answers.get(id)
+    return part === undefined ? [] : [part]
+  })
+  state.pendingCalls = []
+  state.answers.clear()
+  pushPart(state, "user", parts)
+}
+
+/**
+ * Whether the newest model turn still owes a tool result. A carrier counts
+ * too: its calls are only answered once the client replays them, so an
+ * instruction landing between the carrier and the replay would split the turn.
+ */
+function callInFlight(state: ContentsState): boolean {
+  return (
+    state.pendingCalls.length > 0
+    || state.carrierParts.some(
+      (part) => part.functionCall !== undefined && part.functionCall !== null,
+    )
+  )
+}
+
+/** Releases a held instruction once no call is waiting for its result. */
+function releaseInstruction(state: ContentsState): void {
+  if (callInFlight(state) || state.heldInstruction.length === 0) return
+  pushPart(state, "user", state.heldInstruction)
+  state.heldInstruction = []
+}
+
 function applyItem(state: ContentsState, item: JsonObject): void {
   // Tools added mid-conversation travel as their own input item, so the
   // caller merges the declarations and the item stays out of the history.
@@ -429,9 +578,11 @@ function applyItem(state: ContentsState, item: JsonObject): void {
   if (item.role === "system" || item.role === "developer") {
     const text = messageTexts(item.content).join("")
     // GenerateContent has no developer role, so an instruction that arrives
-    // after the conversation started stays where it appeared, as user text.
+    // after the conversation started stays where it appeared, as user text,
+    // unless a call is still unanswered: the result has to come first.
     if (state.contents.length > 0) {
-      pushPart(state, "user", [{ text }])
+      if (callInFlight(state)) state.heldInstruction.push({ text })
+      else pushPart(state, "user", [{ text }])
       return
     }
     state.system.push(text)
@@ -449,11 +600,21 @@ function applyItem(state: ContentsState, item: JsonObject): void {
     case "function_call":
     case "custom_tool_call": {
       pushModelPart(state, [callPart(item, state.calls)])
+      state.pendingCalls.push(parse(z.string().min(1), item.call_id))
       return
     }
     case "function_call_output":
     case "custom_tool_call_output": {
-      pushPart(state, "user", [toolResultPart(item, state.calls)])
+      const callId = parse(z.string().min(1), item.call_id)
+      const part = toolResultPart(item, state.calls)
+      // A result for a call that is not waiting belongs to no group the
+      // upstream still tracks, so it travels on its own.
+      if (state.pendingCalls.includes(callId)) {
+        state.answers.set(callId, part)
+        flushAnswers(state)
+      } else {
+        pushPart(state, "user", [part])
+      }
       return
     }
     case "reasoning": {
@@ -471,6 +632,7 @@ function applyItem(state: ContentsState, item: JsonObject): void {
         return
       }
       const parts = decodeCarrier(item.encrypted_content)
+      dropCarriedParts(state, parts)
       state.carrierParts = parts
       pushPart(state, "model", parts)
       return
@@ -506,8 +668,21 @@ function buildContents(request: Request): Contents {
     system,
     calls: new Map(),
     carrierParts: [],
+    pendingCalls: [],
+    answers: new Map(),
+    heldInstruction: [],
   }
-  for (const item of inputItems) applyItem(state, item)
+  for (const item of inputItems) {
+    applyItem(state, item)
+    releaseInstruction(state)
+  }
+  // A call the client never answered stays unanswered: the upstream accepts a
+  // trailing call group, and inventing a result would change the conversation.
+  flushAnswers(state, true)
+  if (state.heldInstruction.length > 0) {
+    pushPart(state, "user", state.heldInstruction)
+    state.heldInstruction = []
+  }
   return { contents: state.contents, system }
 }
 
@@ -562,7 +737,57 @@ function generationConfig(
   // path, so it is not translated into a number.
   if (request.reasoning !== undefined)
     generation.thinkingConfig = { includeThoughts: true }
+  applyTextFormat(request.text?.format, generation)
   return generation
+}
+
+/**
+ * Responses `text.format` -> Gemini structured output. Plain `text` is the
+ * default on both sides, so it adds nothing. The declared schema travels
+ * unchanged, because it is the contract the model is held to.
+ *
+ * The schema is declared as `responseSchema`. This endpoint accepts that field
+ * and constrains the answer with it, while `responseJsonSchema` is silently
+ * ignored — a 200 with prose is worse than an error, so the ignored spelling
+ * is not used.
+ */
+function applyTextFormat(format: unknown, generation: JsonObject): void {
+  if (format === undefined) return
+  const parsed = parse(
+    z.object({
+      type: z.string().optional(),
+      // A schema is either flat on the format or nested under `json_schema`,
+      // depending on which Responses revision the client speaks.
+      schema: z.unknown().optional(),
+      json_schema: z.object({ schema: z.unknown().optional() }).optional(),
+    }),
+    format,
+  )
+  switch (parsed.type) {
+    case undefined:
+    case "text": {
+      return
+    }
+    case "json_object": {
+      generation.responseMimeType = "application/json"
+      return
+    }
+    case "json_schema": {
+      const schema = parsed.schema ?? parsed.json_schema?.schema
+      if (schema === undefined)
+        throw new GenerateContentConversionError(
+          "json_schema format requires a schema",
+        )
+      generation.responseMimeType = "application/json"
+      generation.responseSchema = structuredClone(schema)
+      return
+    }
+    default: {
+      throw new GenerateContentConversionError(
+        `Unsupported text format: ${String(parsed.type)}`,
+      )
+    }
+  }
 }
 
 /**

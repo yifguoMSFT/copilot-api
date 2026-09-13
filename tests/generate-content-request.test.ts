@@ -14,6 +14,19 @@ const functionTool = {
 }
 const customTool = { type: "custom", name: "patch", format: { type: "text" } }
 
+function fn(name: string, extra: JsonObject = {}): JsonObject {
+  return {
+    type: "function",
+    name,
+    parameters: { type: "object", properties: {} },
+    ...extra,
+  }
+}
+
+function ns(name: string, tools: Array<JsonObject>): JsonObject {
+  return { type: "namespace", name, tools }
+}
+
 interface Body {
   contents: Array<JsonObject>
   systemInstruction?: { parts: Array<JsonObject> }
@@ -123,7 +136,7 @@ describe("GenerateContent request turns and state", () => {
         functionDeclarations: [
           {
             name: "weather",
-            parameters: {
+            parametersJsonSchema: {
               type: "object",
               properties: { city: { type: "string" } },
             },
@@ -140,6 +153,119 @@ describe("GenerateContent request turns and state", () => {
       },
     ])
     expect(body.toolConfig).toEqual({ functionCallingConfig: { mode: "AUTO" } })
+  })
+
+  // A namespace is a group, so a later batch extends it instead of being
+  // dropped whole, and identity is the flattened namespace+child pair.
+  test("merges an additional namespace child by child", () => {
+    const result = request({
+      input: [
+        { role: "user", content: "hi" },
+        {
+          type: "additional_tools",
+          id: "at_1",
+          role: "developer",
+          tools: [ns("mcp", [fn("a", { description: "later" }), fn("b")])],
+        },
+      ],
+      tools: [ns("mcp", [fn("a", { description: "first" })])],
+    })
+
+    expect(result.body.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: "_3_mcpa",
+            description: "first",
+            parametersJsonSchema: { type: "object", properties: {} },
+          },
+          {
+            name: "_3_mcpb",
+            parametersJsonSchema: { type: "object", properties: {} },
+          },
+        ],
+      },
+    ])
+    // The new child is reachable in the reverse direction too, which is how a
+    // call gets its namespace back.
+    expect([...result.tools]).toEqual([
+      ["_3_mcpa", { name: "a", namespace: "mcp", custom: false }],
+      ["_3_mcpb", { name: "b", namespace: "mcp", custom: false }],
+    ])
+  })
+
+  test("keeps the first declaration of a qualified identity", () => {
+    const result = request({
+      input: [
+        { role: "user", content: "hi" },
+        {
+          type: "additional_tools",
+          id: "at_1",
+          role: "developer",
+          tools: [ns("mcp", [fn("a", { description: "second" }), fn("c")])],
+        },
+        {
+          type: "additional_tools",
+          id: "at_2",
+          role: "developer",
+          tools: [ns("mcp", [fn("c", { description: "third" }), fn("d")])],
+        },
+      ],
+      tools: [ns("mcp", [fn("a", { description: "first" })])],
+    })
+
+    const declarations = (
+      result.body.tools as Array<{ functionDeclarations: Array<JsonObject> }>
+    ).flatMap((group) => group.functionDeclarations)
+    expect(declarations.map((child) => child.name)).toEqual([
+      "_3_mcpa",
+      "_3_mcpc",
+      "_3_mcpd",
+    ])
+    expect(declarations[0].description).toBe("first")
+    expect(declarations[1].description).toBeUndefined()
+  })
+
+  test("does not confuse a direct name with a namespace of the same name", () => {
+    const result = request({
+      input: [
+        { role: "user", content: "hi" },
+        {
+          type: "additional_tools",
+          id: "at_1",
+          role: "developer",
+          tools: [ns("one", [fn("x")]), fn("one.x")],
+        },
+      ],
+      tools: [fn("one"), ns("one", [fn("x")])],
+    })
+
+    const names = (result.body.tools as Array<{ functionDeclarations: Array<JsonObject> }>)
+      .flatMap((group) => group.functionDeclarations.map((child) => child.name))
+    expect(names).toEqual(["one", "_3_onex", "one.x"])
+    expect([...result.tools].map(([name]) => name)).toEqual([
+      "one",
+      "_3_onex",
+      "one.x",
+    ])
+  })
+
+  test("leaves the declared tools untouched while merging", () => {
+    const tools = [ns("mcp", [fn("a", { description: "first" })])]
+    const input = [
+      { role: "user", content: "hi" },
+      {
+        type: "additional_tools",
+        id: "at_1",
+        role: "developer",
+        tools: [ns("mcp", [fn("a", { description: "second" }), customTool])],
+      },
+    ]
+    const clone = structuredClone({ tools, input })
+
+    request({ input, tools })
+
+    expect({ tools, input }).toEqual(clone)
   })
 
   test("never emits the model, because the adapter owns the envelope", () => {
@@ -164,7 +290,9 @@ describe("GenerateContent request turns and state", () => {
   })
 
   test("does not send a call twice when the carrier already holds it", () => {
-    const call = { functionCall: { name: "weather", args: { city: "kyoto" } } }
+    const call = {
+      functionCall: { name: "weather", args: { city: "kyoto" }, id: "upstream-1" },
+    }
     const body = bodyOf({
       input: [
         { type: "reasoning", encrypted_content: carrier([{ text: "" }, call]) },
@@ -190,6 +318,241 @@ describe("GenerateContent request turns and state", () => {
           },
         ],
       },
+    ])
+  })
+
+  // The upstream call id and the signature both survive only inside the
+  // carrier, so the bare replay the client derives from the same turn can only
+  // be recognized when neither field takes part in the comparison.
+  test("drops the bare replay of a signed carried call and text", () => {
+    const parts = [
+      { text: "looking up", thoughtSignature: "text-sig==" },
+      {
+        functionCall: { name: "weather", args: { city: "kyoto" }, id: "upstream-1" },
+        thoughtSignature: "call-sig==",
+      },
+    ]
+    const body = bodyOf({
+      input: [
+        { type: "reasoning", id: "r1", encrypted_content: carrier(parts) },
+        { role: "assistant", content: "looking up" },
+        {
+          type: "function_call",
+          call_id: "call_1",
+          name: "weather",
+          arguments: '{"city":"kyoto"}',
+        },
+        { type: "function_call_output", call_id: "call_1", output: "sunny" },
+      ],
+    })
+    expect(body.contents).toEqual([
+      { role: "model", parts },
+      {
+        role: "user",
+        parts: [
+          {
+            functionResponse: {
+              name: "weather",
+              response: { output: "sunny" },
+            },
+          },
+        ],
+      },
+    ])
+  })
+
+  test("lets a trailing carrier supersede the turn it belongs to", () => {
+    const parts = [
+      { text: "" },
+      { functionCall: { name: "weather", args: { city: "kyoto" } }, thoughtSignature: "call-sig==" },
+    ]
+    const body = bodyOf({
+      input: [
+        {
+          type: "function_call",
+          call_id: "call_1",
+          name: "weather",
+          arguments: '{"city":"kyoto"}',
+        },
+        { type: "reasoning", encrypted_content: carrier(parts) },
+        { type: "function_call_output", call_id: "call_1", output: "sunny" },
+      ],
+    })
+    expect(body.contents[0]).toEqual({ role: "model", parts })
+  })
+
+  test("keeps every parallel call exactly once", () => {
+    const parts = [
+      { functionCall: { name: "a", args: {}, id: "upstream-1" }, thoughtSignature: "s1==" },
+      { functionCall: { name: "b", args: {}, id: "upstream-2" } },
+    ]
+    const body = bodyOf({
+      input: [
+        { type: "reasoning", encrypted_content: carrier(parts) },
+        { type: "function_call", call_id: "c1", name: "a", arguments: "{}" },
+        { type: "function_call", call_id: "c2", name: "b", arguments: "{}" },
+      ],
+    })
+    expect(body.contents).toEqual([{ role: "model", parts }])
+  })
+
+  // The upstream treats a missing signature as synthetic history, so the
+  // converter never has to invent the `skip_thought_signature_validator`
+  // sentinel, and it never rewrites a signature it received either.
+  test("never invents or rewrites a signature", () => {
+    const unsigned = bodyOf({
+      input: [
+        {
+          type: "function_call",
+          call_id: "c1",
+          name: "weather",
+          arguments: "{}",
+        },
+      ],
+    })
+    expect(unsigned.contents).toEqual([
+      { role: "model", parts: [{ functionCall: { name: "weather", args: {} } }] },
+    ])
+
+    const forwarded = bodyOf({
+      input: [
+        {
+          type: "function_call",
+          call_id: "c1",
+          name: "weather",
+          arguments: "{}",
+          thought_signature: "skip_thought_signature_validator",
+        },
+      ],
+    })
+    expect(forwarded.contents).toEqual([
+      {
+        role: "model",
+        parts: [
+          {
+            functionCall: { name: "weather", args: {} },
+            thoughtSignature: "skip_thought_signature_validator",
+          },
+        ],
+      },
+    ])
+  })
+
+  // Upstream pairs the Nth response with the Nth call, so results are written
+  // in call order even when the client reports them the other way round.
+  test("writes parallel results as one turn in call order", () => {
+    const body = bodyOf({
+      input: [
+        { role: "user", content: "call both" },
+        { type: "function_call", call_id: "c1", name: "a", arguments: "{}" },
+        { type: "function_call", call_id: "c2", name: "b", arguments: "{}" },
+        { type: "function_call_output", call_id: "c2", output: "second" },
+        { type: "function_call_output", call_id: "c1", output: "first" },
+      ],
+    })
+    expect(body.contents).toEqual([
+      { role: "user", parts: [{ text: "call both" }] },
+      {
+        role: "model",
+        parts: [
+          { functionCall: { name: "a", args: {} } },
+          { functionCall: { name: "b", args: {} } },
+        ],
+      },
+      {
+        role: "user",
+        parts: [
+          { functionResponse: { name: "a", response: { output: "first" } } },
+          { functionResponse: { name: "b", response: { output: "second" } } },
+        ],
+      },
+    ])
+  })
+
+  test("keeps an unanswered call unanswered and still carries the text", () => {
+    const body = bodyOf({
+      input: [
+        { role: "user", content: "call it" },
+        { type: "function_call", call_id: "c1", name: "a", arguments: "{}" },
+        { role: "developer", content: "note" },
+      ],
+    })
+    // No synthesized functionResponse, and the instruction is not lost.
+    expect(body.contents).toEqual([
+      { role: "user", parts: [{ text: "call it" }] },
+      { role: "model", parts: [{ functionCall: { name: "a", args: {} } }] },
+      { role: "user", parts: [{ text: "note" }] },
+    ])
+  })
+
+  test("waits for the tool result before releasing a mid-call instruction", () => {
+    const body = bodyOf({
+      input: [
+        { role: "user", content: "call it" },
+        { type: "function_call", call_id: "c1", name: "weather", arguments: "{}" },
+        { role: "developer", content: "switch to plan mode" },
+        { type: "function_call_output", call_id: "c1", output: "sunny" },
+        { role: "user", content: "and now?" },
+      ],
+    })
+    expect(body.contents).toEqual([
+      { role: "user", parts: [{ text: "call it" }] },
+      { role: "model", parts: [{ functionCall: { name: "weather", args: {} } }] },
+      {
+        role: "user",
+        parts: [
+          {
+            functionResponse: {
+              name: "weather",
+              response: { output: "sunny" },
+            },
+          },
+        ],
+      },
+      { role: "user", parts: [{ text: "switch to plan mode" }] },
+      { role: "user", parts: [{ text: "and now?" }] },
+    ])
+  })
+
+  test("keeps a carried turn whole when an instruction lands inside it", () => {
+    const parts = [
+      {
+        functionCall: { name: "weather", args: { city: "kyoto" }, id: "upstream-1" },
+        thoughtSignature: "call-sig==",
+      },
+      { text: "" },
+    ]
+    const body = bodyOf({
+      input: [
+        { role: "user", content: "call it" },
+        { type: "reasoning", encrypted_content: carrier(parts) },
+        { role: "developer", content: "be brief" },
+        {
+          type: "function_call",
+          call_id: "c1",
+          name: "weather",
+          arguments: '{"city":"kyoto"}',
+        },
+        { type: "function_call_output", call_id: "c1", output: "sunny" },
+      ],
+    })
+    // The instruction cannot split the carried turn, so the replayed call is
+    // recognized as the carried one instead of becoming a second model turn.
+    expect(body.contents).toEqual([
+      { role: "user", parts: [{ text: "call it" }] },
+      { role: "model", parts },
+      {
+        role: "user",
+        parts: [
+          {
+            functionResponse: {
+              name: "weather",
+              response: { output: "sunny" },
+            },
+          },
+        ],
+      },
+      { role: "user", parts: [{ text: "be brief" }] },
     ])
   })
 })
@@ -223,7 +586,7 @@ describe("GenerateContent request tools and generation parameters", () => {
       properties: { input: { type: "string" } },
       required: ["input"],
     })
-    expect(declarations[0].parameters).toEqual(functionTool.parameters)
+    expect(declarations[0].parametersJsonSchema).toEqual(functionTool.parameters)
     expect([...result.tools]).toEqual([
       ["weather", { name: "weather", custom: false }],
       ["patch", { name: "patch", custom: true }],
@@ -241,9 +604,60 @@ describe("GenerateContent request tools and generation parameters", () => {
       input: "hi",
       tools: [{ type: "function", name: "t", parameters }],
     })
-    expect(body.tools?.[0].functionDeclarations[0].parameters).toEqual(
+    expect(body.tools?.[0].functionDeclarations[0].parametersJsonSchema).toEqual(
       parameters,
     )
+  })
+
+  test("declares the schema as JSON Schema so const and typed enums survive", () => {
+    const parameters = {
+      type: "object",
+      properties: {
+        flag: { type: "boolean", const: true, enum: [true] },
+        count: { type: "number", anyOf: [{ type: "number", enum: [1, 2] }] },
+        mode: { type: "string", enum: ["plan", "edit"] },
+      },
+    }
+    const clone = structuredClone(parameters)
+    const body = bodyOf({
+      input: "hi",
+      tools: [{ type: "function", name: "t", parameters }],
+    })
+
+    // The legacy `parameters` proto rejects `const` and non-string enum
+    // members, so the schema is published under the JSON Schema field instead.
+    expect(
+      body.tools?.[0].functionDeclarations[0].parametersJsonSchema,
+    ).toEqual(parameters)
+    expect(body.tools?.[0].functionDeclarations[0].parameters).toBeUndefined()
+    expect(parameters).toEqual(clone)
+  })
+
+  test("keeps resolving a local reference inside the declared schema", () => {
+    const body = request(
+      {
+        input: "hi",
+        tools: [
+          {
+            type: "function",
+            name: "t",
+            parameters: {
+              $defs: { flag: { type: "boolean", enum: [false] } },
+              type: "object",
+              properties: { flag: { $ref: "#/$defs/flag" } },
+            },
+          },
+        ],
+      },
+      { cleanSchema: true },
+    ).body as unknown as Body
+
+    expect(
+      body.tools?.[0].functionDeclarations[0].parametersJsonSchema,
+    ).toEqual({
+      type: "object",
+      properties: { flag: { type: "boolean", enum: [false] } },
+    })
   })
 
   test("replays calls and results inside the model and user turns", () => {
@@ -478,6 +892,79 @@ describe("GenerateContent request rejection", () => {
       { role: "user", parts: [{ text: "hi" }] },
       { role: "model", parts: [{ text: "Considering the request", thought: true }, { text: "hello" }] },
       { role: "user", parts: [{ text: "continue" }] },
+    ])
+  })
+})
+
+describe("GenerateContent request structured output", () => {
+  const generationOf = (format?: unknown): JsonObject | undefined =>
+    bodyOf({ input: "hi", ...(format === undefined ? {} : { text: { format } }) })
+      .generationConfig
+
+  test("leaves plain and absent text formats at the default", () => {
+    expect(generationOf()).toBeUndefined()
+    expect(generationOf({})).toBeUndefined()
+    expect(generationOf({ type: "text" })).toBeUndefined()
+  })
+
+  test("maps json_object to a JSON mime type without a schema", () => {
+    expect(generationOf({ type: "json_object" })).toEqual({
+      responseMimeType: "application/json",
+    })
+  })
+
+  test("carries a json_schema unchanged, including enum and anyOf", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["plan", "edit"] },
+        count: { anyOf: [{ type: "integer", enum: [1, 2] }] },
+      },
+      required: ["mode"],
+      additionalProperties: false,
+    }
+    const clone = structuredClone(schema)
+    const text = { type: "json_schema", name: "answer", strict: true, schema }
+
+    expect(generationOf(text)).toEqual({
+      responseMimeType: "application/json",
+      responseSchema: schema,
+    })
+    expect(schema).toEqual(clone)
+    expect(generationOf(text)?.responseSchema).not.toBe(schema)
+  })
+
+  test("accepts the nested json_schema revision", () => {
+    expect(
+      generationOf({
+        type: "json_schema",
+        json_schema: { name: "answer", schema: { type: "object" } },
+      }),
+    ).toEqual({
+      responseMimeType: "application/json",
+      responseSchema: { type: "object" },
+    })
+  })
+
+  test("refuses a format whose contract cannot be expressed", () => {
+    expect(
+      failure({ input: "hi", text: { format: { type: "json_schema" } } }),
+    ).toContain("requires a schema")
+    expect(failure({ input: "hi", text: { format: { type: "grammar" } } })).toContain(
+      "Unsupported text format",
+    )
+  })
+
+  test("keeps the structured output request free of application policy", () => {
+    const body = bodyOf({
+      input: "hi",
+      text: {
+        format: { type: "json_schema", name: "answer", schema: { type: "object" } },
+      },
+    })
+    expect(Object.keys(body.generationConfig ?? {})).toEqual([
+      "responseMimeType",
+      "responseSchema",
     ])
   })
 })
