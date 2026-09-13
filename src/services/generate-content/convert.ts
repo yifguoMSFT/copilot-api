@@ -262,6 +262,38 @@ interface FlattenedTools {
   tools: Map<string, ToolIdentity>
 }
 
+/**
+ * Codex declares tools it adds mid-conversation as `additional_tools` input
+ * items. A top-level tool wins, so an extra declaration never replaces one
+ * the request already made.
+ */
+function mergeAdditionalTools(
+  tools: ReadonlyArray<JsonObject>,
+  items: Request["input"],
+): Array<JsonObject> {
+  if (!Array.isArray(items)) return [...tools]
+  const declared = new Set(
+    tools.flatMap((tool) => (typeof tool.name === "string" ? [tool.name] : [])),
+  )
+  const merged = [...tools]
+  for (const item of items) {
+    if (item.type !== "additional_tools") continue
+    const additional = parse(
+      z.array(z.record(z.string(), z.unknown())).optional(),
+      item.tools,
+    )
+    for (const tool of additional ?? []) {
+      const name = typeof tool.name === "string" ? tool.name : undefined
+      if (name !== undefined) {
+        if (declared.has(name)) continue
+        declared.add(name)
+      }
+      merged.push(tool)
+    }
+  }
+  return merged
+}
+
 function flattenTools(tools: ReadonlyArray<JsonObject>, options?: ConversionOptions): FlattenedTools {
   const result: FlattenedTools = { declarations: [], tools: new Map() }
   for (const tool of tools) {
@@ -391,12 +423,18 @@ function callPart(item: JsonObject, calls: Map<string, string>): JsonObject {
 }
 
 function applyItem(state: ContentsState, item: JsonObject): void {
+  // Tools added mid-conversation travel as their own input item, so the
+  // caller merges the declarations and the item stays out of the history.
+  if (item.type === "additional_tools") return
   if (item.role === "system" || item.role === "developer") {
-    if (state.contents.length > 0)
-      throw new GenerateContentConversionError(
-        "Instruction in middle of history",
-      )
-    state.system.push(messageTexts(item.content).join(""))
+    const text = messageTexts(item.content).join("")
+    // GenerateContent has no developer role, so an instruction that arrives
+    // after the conversation started stays where it appeared, as user text.
+    if (state.contents.length > 0) {
+      pushPart(state, "user", [{ text }])
+      return
+    }
+    state.system.push(text)
     return
   }
   switch (item.type) {
@@ -419,6 +457,19 @@ function applyItem(state: ContentsState, item: JsonObject): void {
       return
     }
     case "reasoning": {
+      // Other providers' opaque state cannot be decoded or replayed by Gemini.
+      // Keep their readable summaries; only decode carriers we produced.
+      if (
+        typeof item.encrypted_content !== "string"
+        || !item.encrypted_content.startsWith(STATE_CARRIER_PREFIX)
+      ) {
+        const summary = parse(
+          z.array(z.object({ text: z.string() })),
+          item.summary ?? [],
+        )
+        pushPart(state, "model", summary.map(({ text }) => ({ text, thought: true })))
+        return
+      }
       const parts = decodeCarrier(item.encrypted_content)
       state.carrierParts = parts
       pushPart(state, "model", parts)
@@ -551,16 +602,17 @@ export function convertResponsesRequestToGenerateContent(
   const request = parse(requestSchema, value)
   assertResolvable(request)
   const { contents, system } = buildContents(request)
-  const flattened = flattenTools(request.tools ?? [], options)
+  const declared = mergeAdditionalTools(request.tools ?? [], request.input)
+  const flattened = flattenTools(declared, options)
   const body: JsonObject = { contents }
   if (system.length > 0)
     body.systemInstruction = { parts: system.map((text) => ({ text })) }
-  if (request.tools !== undefined && flattened.declarations.length > 0)
+  if (flattened.declarations.length > 0)
     body.tools = [{ functionDeclarations: flattened.declarations }]
   const config = toolConfig(request.tool_choice, new Set(flattened.tools.keys()))
   if (config !== undefined)
     body.toolConfig = { functionCallingConfig: config }
-  else if ((request.tools?.length ?? 0) > 0)
+  else if (declared.length > 0)
     body.toolConfig = { functionCallingConfig: { mode: "AUTO" } }
   const generation = generationConfig(request)
   if (Object.keys(generation).length > 0) body.generationConfig = generation

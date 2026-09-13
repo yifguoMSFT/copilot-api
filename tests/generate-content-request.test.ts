@@ -77,6 +77,71 @@ describe("GenerateContent request turns and state", () => {
     ])
   })
 
+  test("keeps an instruction that arrives mid-history as a user turn", () => {
+    const body = bodyOf({
+      instructions: "top",
+      input: [
+        { role: "developer", content: "rules" },
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "yo" },
+        { role: "developer", content: "switch to plan mode" },
+      ],
+    })
+
+    expect(body.contents).toEqual([
+      { role: "user", parts: [{ text: "hi" }] },
+      { role: "model", parts: [{ text: "yo" }] },
+      { role: "user", parts: [{ text: "switch to plan mode" }] },
+    ])
+    // Only the leading instruction joins the system prompt.
+    expect(body.systemInstruction).toEqual({
+      parts: [{ text: "top" }, { text: "rules" }],
+    })
+  })
+
+  test("takes tools from additional_tools items without overriding top-level ones", () => {
+    const body = bodyOf({
+      input: [
+        { role: "user", content: "hi" },
+        {
+          type: "additional_tools",
+          id: "at_1",
+          role: "developer",
+          tools: [
+            { type: "function", name: "weather", description: "later" },
+            customTool,
+          ],
+        },
+      ],
+      tools: [functionTool],
+    })
+
+    // The item carries declarations, so it never becomes a turn.
+    expect(body.contents).toEqual([{ role: "user", parts: [{ text: "hi" }] }])
+    expect(body.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: "weather",
+            parameters: {
+              type: "object",
+              properties: { city: { type: "string" } },
+            },
+          },
+          {
+            name: "patch",
+            parameters: {
+              type: "object",
+              properties: { input: { type: "string" } },
+              required: ["input"],
+            },
+          },
+        ],
+      },
+    ])
+    expect(body.toolConfig).toEqual({ functionCallingConfig: { mode: "AUTO" } })
+  })
+
   test("never emits the model, because the adapter owns the envelope", () => {
     const body = bodyOf({ model: "gemini-3.8-flash-medium", input: "hi" })
     expect(Object.keys(body)).toEqual(["contents"])
@@ -390,10 +455,8 @@ describe("GenerateContent request rejection", () => {
     ).toContain("Conflicting tool result name")
   })
 
-  test("refuses a reasoning item without our state carrier", () => {
-    expect(failure({ input: [{ type: "reasoning", id: "r" }] })).toContain(
-      "state carrier",
-    )
+  test("accepts foreign reasoning while rejecting corrupt native carriers", () => {
+    expect(bodyOf({ input: [{ type: "reasoning", id: "r" }] }).contents).toEqual([])
     expect(
       failure({
         input: [
@@ -404,10 +467,17 @@ describe("GenerateContent request rejection", () => {
         ],
       }),
     ).toContain("encoding")
-    expect(
-      failure({
-        input: [{ type: "reasoning", encrypted_content: "something-else" }],
-      }),
-    ).toContain("Unsupported model state carrier")
+    expect(bodyOf({
+      input: [
+        { role: "user", content: "hi" },
+        { type: "reasoning", encrypted_content: "foreign-opaque-state", summary: [{ type: "summary_text", text: "Considering the request" }] },
+        { role: "assistant", content: "hello" },
+        { role: "user", content: "continue" },
+      ],
+    }).contents).toEqual([
+      { role: "user", parts: [{ text: "hi" }] },
+      { role: "model", parts: [{ text: "Considering the request", thought: true }, { text: "hello" }] },
+      { role: "user", parts: [{ text: "continue" }] },
+    ])
   })
 })
