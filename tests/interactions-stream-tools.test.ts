@@ -34,8 +34,8 @@ describe("Interactions SSE tool identity", () => {
       (event) => event.type === "response.function_call_arguments.done",
     )
     expect(done.map((event) => [event.item_id, event.arguments])).toEqual([
-      ["v1_id_1", '{"y":2}'],
-      ["v1_id_0", '{"x":1}'],
+      ["fc_v1_id_1", '{"y":2}'],
+      ["fc_v1_id_0", '{"x":1}'],
     ])
     const output = (result.at(-1)?.response as Record<string, unknown>)
       .output as Array<Record<string, unknown>>

@@ -1,4 +1,3 @@
-import fs from "node:fs"
 import { HttpStatusError } from "~/lib/error"
 import type { JsonObject } from "~/services/generate-content/convert"
 import { convertResponsesRequestToGenerateContent } from "~/services/generate-content/convert"
@@ -46,7 +45,7 @@ export async function createAntigravityResponses(
 
   let converted
   try {
-    converted = convertResponsesRequestToGenerateContent(responsesReq, { cleanSchema: true }); if (Array.isArray(responsesReq.input) && responsesReq.input.length > 2) { fs.writeFileSync("turn2-req.json", JSON.stringify({ req: responsesReq, converted }, null, 2)); }
+    converted = convertResponsesRequestToGenerateContent(responsesReq, { cleanSchema: true })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
     throw new HttpStatusError(400, message, "conversion_error")
@@ -70,8 +69,16 @@ export async function createAntigravityResponses(
     )
   }
 
-  // Derive stable session ID: check headers x-session-id or fallback
-  const headerSessionId = options.headers?.get("x-session-id")
+  // Derive stable session ID: check session-id, x-session-id, prompt_cache_key, or fallback
+  const headerSessionId =
+    options.headers?.get("session-id")
+    ?? options.headers?.get("x-session-id")
+    ?? (typeof responsesReq.prompt_cache_key === "string" && responsesReq.prompt_cache_key.trim() !== ""
+      ? responsesReq.prompt_cache_key.trim()
+      : undefined)
+    ?? (responsesReq.client_metadata && typeof responsesReq.client_metadata === "object" && typeof (responsesReq.client_metadata as Record<string, unknown>).session_id === "string"
+      ? (responsesReq.client_metadata as Record<string, string>).session_id.trim()
+      : undefined)
   const sessionId = headerSessionId && headerSessionId.trim() !== "" ? headerSessionId.trim() : `-${Date.now()}`
 
   const envelope = buildCloudCodeEnvelope({

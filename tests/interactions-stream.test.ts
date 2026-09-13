@@ -45,7 +45,7 @@ describe("Interactions SSE", () => {
       [
         {
           type: "message",
-          id: "v1_id_0",
+          id: "msg_v1_id_0",
           role: "assistant",
           status: "completed",
           content: [{ type: "output_text", text: "Hello", annotations: [] }],
@@ -172,10 +172,10 @@ describe("Interactions SSE item identity", () => {
         .filter((event) => event.item_id !== undefined)
         .map((event) => event.item_id),
     )
-    expect([...referenced]).toEqual(["v1_id_0"])
+    expect([...referenced]).toEqual(["msg_v1_id_0"])
     const output = (result.at(-1)?.response as Record<string, unknown>)
       .output as Array<Record<string, unknown>>
-    expect(output.map((item) => item.id)).toEqual(["v1_id_0"])
+    expect(output.map((item) => item.id)).toEqual(["msg_v1_id_0"])
   })
 })
 
@@ -514,7 +514,7 @@ describe("Interactions SSE failed replay state", () => {
     expect(failedOutput(result)).toEqual([
       {
         type: "reasoning",
-        id: "v1_id_0",
+        id: "rs_v1_id_0",
         summary: [{ type: "summary_text", text: "thinking" }],
       },
     ])
@@ -616,7 +616,7 @@ describe("Interactions SSE failed replay state", () => {
     expect(failedOutput(result)).toEqual([
       {
         type: "message",
-        id: "v1_id_0",
+        id: "msg_v1_id_0",
         role: "assistant",
         status: "incomplete",
         content: [{ type: "output_text", text: "partial", annotations: [] }],

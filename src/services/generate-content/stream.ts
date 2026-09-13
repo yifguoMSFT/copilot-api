@@ -253,7 +253,7 @@ export class GenerateContentEventStream {
       }
       this.messageText += part.text
       this.emit("response.output_text.delta", {
-        item_id: responseItemId(this.options.itemIdScope, this.messageOutputIndex),
+        item_id: responseItemId(this.options.itemIdScope, this.messageOutputIndex, "msg"),
         output_index: this.messageOutputIndex,
         content_index: 0,
         delta: part.text,
@@ -273,7 +273,7 @@ export class GenerateContentEventStream {
     this.messageOutputIndex = this.nextOutputIndex++
     this.messageStarted = true
     const item: JsonObject = {
-      id: responseItemId(this.options.itemIdScope, this.messageOutputIndex),
+      id: responseItemId(this.options.itemIdScope, this.messageOutputIndex, "msg"),
       type: "message",
       status: "in_progress",
       role: "assistant",
@@ -294,7 +294,7 @@ export class GenerateContentEventStream {
   private finishMessageItem(): void {
     if (!this.messageStarted || this.messageDone) return
     this.messageDone = true
-    const itemId = responseItemId(this.options.itemIdScope, this.messageOutputIndex)
+    const itemId = responseItemId(this.options.itemIdScope, this.messageOutputIndex, "msg")
     this.emit("response.output_text.done", {
       item_id: itemId,
       output_index: this.messageOutputIndex,
@@ -335,7 +335,7 @@ export class GenerateContentEventStream {
     if (isCustom) {
       const rawInput = typeof args.input === "string" ? args.input : JSON.stringify(args)
       const customItem: JsonObject = {
-        id: responseItemId(this.options.itemIdScope, outputIndex),
+        id: responseItemId(this.options.itemIdScope, outputIndex, isCustom ? "ctc" : "fc"),
         type: "custom_tool_call",
         status: "in_progress",
         call_id: callId,
@@ -372,7 +372,7 @@ export class GenerateContentEventStream {
     } else {
       const rawArgs = JSON.stringify(args)
       const funcItem: JsonObject = {
-        id: responseItemId(this.options.itemIdScope, outputIndex),
+        id: responseItemId(this.options.itemIdScope, outputIndex, "fc"),
         type: "function_call",
         status: "in_progress",
         call_id: callId,
@@ -422,7 +422,7 @@ export class GenerateContentEventStream {
     )
     if (hasThoughtOrSignature && this.accumulatedParts.length > 0) {
       const reasoningItem: JsonObject = {
-        id: responseItemId(this.options.itemIdScope, this.nextOutputIndex++),
+        id: responseItemId(this.options.itemIdScope, this.nextOutputIndex++, "rs"),
         type: "reasoning",
         summary: [],
         encrypted_content: encodeStateCarrier(this.accumulatedParts),

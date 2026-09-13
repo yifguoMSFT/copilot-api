@@ -74,7 +74,8 @@ describe("createAntigravityResponses in-process service", () => {
       input: "hi",
     })
 
-    const headers = new Headers({ "x-session-id": "test-session-123" })
+    // Verify Session-Id header as sent by Codex client
+    const headers = new Headers({ "session-id": "codex-session-abc" })
     const response = await createAntigravityResponses(body, {
       credentialStore: mockStore,
       headers,
@@ -90,7 +91,7 @@ describe("createAntigravityResponses in-process service", () => {
     expect(capturedHeaders["user-agent"]).toBe("antigravity/hub/2.9.1 darwin/arm64")
     expect(capturedBody.model).toBe("gemini-3.8-flash-high")
     expect(capturedBody.project).toBe("my-test-project")
-    expect(capturedBody.request.sessionId).toBe("test-session-123")
+    expect(capturedBody.request.sessionId).toBe("codex-session-abc")
 
     // Read SSE body
     const text = await response.text()
