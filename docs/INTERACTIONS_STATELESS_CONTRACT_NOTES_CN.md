@@ -18,8 +18,8 @@
 
 规范把签名定义为可选字段，且描述是后端校验用途：
 
-- `antigravity-interactions-api-docs/google-ai-interactions-api.md:13849` 起 `ThoughtStep`，`signature` 标记 `(optional)`，说明为 “A signature hash for backend validation”（同文件 13865 行）。
-- `antigravity-interactions-api-docs/gemini-enterprise-interactions-api.md:2065` 起同一字段同样是 `(optional)`。
+- `../antigravity-interactions-api-docs/google-ai-interactions-api.md:13849` 起 `ThoughtStep`，`signature` 标记 `(optional)`，说明为 “A signature hash for backend validation”（同文件 13865 行）。
+- `../antigravity-interactions-api-docs/gemini-enterprise-interactions-api.md:2065` 起同一字段同样是 `(optional)`。
 - 流式侧 `ThoughtSignatureDelta.signature` 也是 optional（google 文档 9358 行附近）；`ThoughtSummaryDelta` 的 `content` 说明为 “A new summary item to be added to the thought”（9382-9422 行）。两份规范都没有“thought 必须带签名”的表述。
 - `ThoughtStep.summary` 亦为 optional（google 文档 13871 行），因此“只有 summary、没有 signature”在 schema 上合法。
 
@@ -50,8 +50,8 @@ A 说明把无签名 `reasoning` 项当作下一轮输入会被拒绝，B 说明
 
 instructions 一侧是明确的：
 
-- `antigravity-interactions-api-docs/openai-responses-api.md:14416`：“When used along with `previous_response_id`, the instructions from a previous response will not be carried over to the next response.”
-- `antigravity-interactions-api-docs/openai-migrate-to-responses.md:708`：要求每轮重发稳定 instructions，并同样说明不会被携带。
+- `../antigravity-interactions-api-docs/openai-responses-api.md:14416`：“When used along with `previous_response_id`, the instructions from a previous response will not be carried over to the next response.”
+- `../antigravity-interactions-api-docs/openai-migrate-to-responses.md:708`：要求每轮重发稳定 instructions，并同样说明不会被携带。
 - 代码对应：`convert.ts:513-520` 只在 `system.length > 0` 时写 `system_instruction`，并在有父 ID 时写 `previous_interaction_id`。这与 OpenAI 语义一致，父引用续轮只携带本轮新 instructions。
 
 tools 一侧没有规范依据：

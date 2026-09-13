@@ -23,7 +23,7 @@
 | 客户端二进制 | `C:\Users\Jeff\AppData\Local\Programs\antigravity\resources\bin\language_server.exe`，156,513,792 字节 |
 | 提取方式 | 对二进制做只读字符串/符号扫描：`rg -a -o --no-line-number <pattern> <bin>`，必要时按字节偏移窗口导出可打印串 |
 | 参考源码 | `reference/CLIProxyAPI/internal/auth/antigravity/constants.go`、`internal/runtime/executor/antigravity_executor.go`、`internal/translator/antigravity/interactions/*` |
-| 公开规范 | `antigravity-interactions-api-docs/google-ai-interactions-api.md`、`antigravity-interactions-api-docs/gemini-enterprise-interactions-api.md` |
+| 公开规范 | `../antigravity-interactions-api-docs/google-ai-interactions-api.md`、`../antigravity-interactions-api-docs/gemini-enterprise-interactions-api.md` |
 
 符号名与描述符路径是**本地观察**。它们证明客户端包含哪些类型和 RPC，不能证明远端一定以同名 HTTP 接口提供服务——这一点正是第 5 节待联网确认的内容。
 

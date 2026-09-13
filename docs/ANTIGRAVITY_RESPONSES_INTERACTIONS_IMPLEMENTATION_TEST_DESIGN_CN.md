@@ -79,4 +79,4 @@ session-id、prompt_cache_key 等显式上下文原样随转换结果 metadata �
 
 ## 资料
 
-只读参考 `antigravity-interactions-api-docs/` 中已抓取的 Google Interactions、Gemini Enterprise Interactions、OpenAI Responses 和迁移指南；v1 字段以已核对的官方 v1 资料为准。
+只读参考 `../antigravity-interactions-api-docs/` 中已抓取的 Google Interactions、Gemini Enterprise Interactions、OpenAI Responses 和迁移指南；v1 字段以已核对的官方 v1 资料为准。

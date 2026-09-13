@@ -124,7 +124,7 @@ namespace__name 拼接不是单射，例如 namespace=a__b/name=c 与 namespace=
 ## 5. 审核依据
 
 - 本地代码：src/services/interactions/convert.ts、src/services/interactions/stream.ts、scripts/interactions-codex-live.ts。
-- 已抓取规范：antigravity-interactions-api-docs/openai-responses-api.md（phase、reasoning、item_reference、compaction）；openai-migrate-to-responses.md（完整历史、previous_response_id、Conversations、instructions 继承）；google-ai-interactions-api.md（store、previous_interaction_id、thought、工具结果、last_event_id）。
+- 已抓取规范：../antigravity-interactions-api-docs/openai-responses-api.md（phase、reasoning、item_reference、compaction）；openai-migrate-to-responses.md（完整历史、previous_response_id、Conversations、instructions 继承）；google-ai-interactions-api.md（store、previous_interaction_id、thought、工具结果、last_event_id）。
 - 官方原始页面：https://developers.openai.com/api/reference/resources/responses 、https://developers.openai.com/api/docs/guides/migrate-to-responses 、https://ai.google.dev/api/interactions-api-v1 。
 
 本计划基于已抓取快照与当前实现审核；涉及 Google v1 具体字段是否可省略、终态补全语义等项目，实施前须核对对应 v1 规范及原始样本，不能沿用旧测试中的假设。
