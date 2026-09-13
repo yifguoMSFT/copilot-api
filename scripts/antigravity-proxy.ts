@@ -12,6 +12,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 import {
+  ANTIGRAVITY_ENDPOINTS,
   ANTIGRAVITY_OAUTH,
   AntigravityCredentialStore,
   runAntigravityLogin,
@@ -22,8 +23,14 @@ import {
   resolveUpstreamOrigin,
 } from "../src/services/antigravity/proxy"
 
-export const DEFAULT_UPSTREAM_ORIGIN =
-  "https://generativelanguage.googleapis.com"
+/**
+ * Antigravity's own backend, not a public Google API. Verified live on
+ * 2026-09-13: this origin answers `v1internal:generateContent`,
+ * `v1internal:loadCodeAssist`, and `v1internal:fetchAvailableModels` with the
+ * Antigravity login bearer. `https://cloudcode-pa.googleapis.com` serves the
+ * metadata RPCs but answered `v1internal:generateContent` with 429.
+ */
+export const DEFAULT_UPSTREAM_ORIGIN = ANTIGRAVITY_ENDPOINTS.daily
 export const DEFAULT_LISTEN_HOST = "127.0.0.1"
 export const DEFAULT_LISTEN_PORT = 51_234
 export const DEFAULT_CREDENTIAL_PATH = join(

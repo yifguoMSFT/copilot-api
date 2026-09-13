@@ -14,7 +14,7 @@
 
 由此，Phase 1 报告第 9.1 节“`registerInteraction` 是创建/续写 Interaction 的接口”这一推断**不成立**，应当作废。客户端里确实存在 Interactions 的**内容词汇表**（`Turn`、`TextContent`、`ThoughtSummaryContent`、`ToolCallContent` 等），但它被用在 Live/bidi 生成路径上，而不是一个 Interactions 资源服务。
 
-对计划的直接影响见第 5 节：代理的目标上游**大概率不是 Cloud Code**，而是 `https://generativelanguage.googleapis.com`。这是候选，不是已验证事实。
+对计划的直接影响：Antigravity 登录态真正可用的后端是它自己的 Cloud Code 专有 origin（`v1internal:*`），**不是** `https://generativelanguage.googleapis.com`。本文第 2、4、7 节原先按“公开 Interactions”写的推断已被 2026-09-13 的真实调用推翻，更正与证据见第 8 节。
 
 ## 1. 调查方法
 
@@ -46,7 +46,7 @@
 
 注意版本是 **`v1beta`**，不是 `v1`。这与仓库里 `scripts/interactions-codex-live.ts` 之外的假设不同，需要在实作与联调时按 `v1beta` 处理。
 
-**候选结论（推断，非事实）：** 如果目标是“用 Antigravity 登录态直接使用公开 Interactions”，那么代理的固定上游更可能是 `https://generativelanguage.googleapis.com`，路径由调用方按 `v1beta/interactions...` 原样给出。Cloud Code 的 `v1internal:` 命名空间里没有对应的创建接口。
+**更正（2026-09-13 实测）：** 代理的固定上游是 Antigravity 自己的 `https://daily-cloudcode-pa.googleapis.com`，路径由调用方按 `v1internal:<RPC>` 原样给出。`https://generativelanguage.googleapis.com/v1beta/interactions` 确实是真实存在的公开接口，但 Antigravity 登录 token 在 scope 层被拒（403），而且在两个 Cloud Code origin 上 `/v1beta/interactions` 都是 404。证据见第 8 节。
 
 请求头只能给出方向性判断：`Content-Type: application/json` 与 `Authorization: Bearer <access_token>` 是公开 Interactions 的常规要求；是否存在额外的 key 头、`x-goog-user-project`、UA 要求，本地无法判定。
 
@@ -80,7 +80,7 @@ google.internal.cloud.code.v1internal.JetskiService
 
 **新增观察：** 二进制中还出现 `https://www.googleapis.com/auth/aicode` 与主机 `https://aicode.googleapis.com`，说明客户端另有 aicode 相关 scope 与主机；这属于观察到的存在，不构成任何接口可用性结论。
 
-**未验证：** 该 access token 是否被 `generativelanguage.googleapis.com/v1beta/interactions` 接受。`cloud-platform` 是 Google Cloud scope，而 AI Studio 的 Generative Language API 通常使用 API key 或 OAuth；两者是否互通必须由一次真实调用回答，本地无法判定。若走企业版路径，`project` 出现在 **URL path** 中（`/projects/{project}/locations/global/interactions`），与 Cloud Code 的 body 位置不同。
+**已实测（2026-09-13）：** 该 access token **不被** `generativelanguage.googleapis.com/v1beta/interactions` 接受（403 `ACCESS_TOKEN_SCOPE_INSUFFICIENT`），但**被** `cloudcode-pa.googleapis.com` 与 `daily-cloudcode-pa.googleapis.com` 的 `v1internal:*` 接受。`cloud-platform` 与 AI Studio 的 `generative-language*` 是两套 scope，不互通。若走企业版路径，`project` 出现在 **URL path** 中（`/projects/{project}/locations/global/interactions`），与 Cloud Code 的 body 位置不同。见第 8 节。
 
 ## 5. 问题 4：二进制字段 vs 公开规范的逐项对照
 
@@ -106,7 +106,7 @@ google.internal.cloud.code.v1internal.JetskiService
 
 ## 6. 问题 5：必须联网才能确认的清单
 
-以下项目本地证据无法回答，逐条对应一次最小真实调用：
+以下项目本地证据无法回答，逐条对应一次最小真实调用。第 8 节已把其中的 1、2、3、8 项改为实测结果；4-7 项属于公开 Interactions 的语义，在 Antigravity 自己的 origin 上不适用，因此仍然开放。
 
 1. Antigravity 的 OAuth access token 能否用于 `https://generativelanguage.googleapis.com`（scope 是否足够、是否被要求 API key）。
 2. `POST /v1beta/interactions` 在该 token 下的真实状态码与响应体：200 成功、401/403 鉴权失败、404 路径不存在，还是 400 参数形状不符。
@@ -117,30 +117,57 @@ google.internal.cloud.code.v1internal.JetskiService
 7. 缓存指标：同一稳定上下文重复请求时，响应中是否出现可观测的 cached token 计数。仅凭 ID 相同不能判定 cache hit。
 8. `registerInteraction` 与 `v1internal:*` 命名空间在远端是否可达、是否只是本地/内网接口。
 
-在这些项目有结果之前，[[ANTIGRAVITY_NATIVE_INTERACTIONS_PROXY_PLAN_CN.md]] 与 [[ANTIGRAVITY_NATIVE_INTERACTIONS_PROXY_REPORT_CN.md]] 都必须把“Antigravity 原生 Interactions 可用”列为未验证。
+第 8 节之后，“Antigravity 原生 Interactions 可用”这一说法应当作废：Antigravity 的 origin 上不存在 Interactions 路径，而公开 Interactions 拒绝 Antigravity 登录凭据。
 
 ## 7. 对计划的修正建议
 
-1. 把“Antigravity 背后的 Interactions API”改写为“**Antigravity 登录态 + 公开 Interactions API**”。代理的固定上游应配置为 `https://generativelanguage.googleapis.com`，而不是 Cloud Code。
+1. 代理的固定上游是 **Antigravity 自己的 `https://daily-cloudcode-pa.googleapis.com`**，路径由调用方按 `v1internal:*` 给出。（本条原写作“公开 Interactions / `generativelanguage.googleapis.com`”，已被 2026-09-13 的实测推翻，见第 8 节。）
 2. 删除以 `v1internal:registerInteraction` 为线索的探测方向，它的语义已经确定，与对话无关。
 3. 保留代理“只注入鉴权、正文原样转发”的设计。这个设计在上述修正后依然成立，而且比原设想更简单：不需要 envelope 组装，也不需要理解 Interactions 语义。
 4. 路径版本参数由调用方给出；代理不补、不改 `v1beta` 或 `alt=sse`。
 5. 转换器继续按公开规范工作，不需要为 Antigravity 做特殊分支；需要实测的只是鉴权与连通性。
 
-## 8. 实测补充（2026-09-13，已获授权的有界调用）
+## 8. 实测补充（2026-09-13）
 
-第 6 节的清单是“只有联网才能回答”的问题。本次按批复确认书执行到第一条外部端点探测，并在 403 处按停止条件终止；未重试、未换端点、未改用 `generateContent`。
+第 6 节的清单只能由真实调用回答。本节记录两轮实测：第一轮打错了产品面（公开 Google API），第二轮改打 Antigravity 自己的 Cloud Code origin。抓取文件都在 Git 之外：`%TEMP%\antigravity-live-capture\`，`authorization` 一律记为 `Bearer <redacted>`。凭据为 `~/.cli-proxy-api/antigravity-<email>.json`。
 
-| 第 6 节条目 | 实测结果 |
+### 8.1 第一轮：打到公开 Google API（结论作废）
+
+| 请求 | 实测结果 |
 | --- | --- |
-| 1. Antigravity access token 能否用于 `generativelanguage.googleapis.com` | **不能（scope 不足）。** 403 `ACCESS_TOKEN_SCOPE_INSUFFICIENT`；响应头 `www-authenticate` 要求 `https://www.googleapis.com/auth/generative-language` 及其 tuning / retriever 变体 |
-| 2. `POST /v1beta/interactions` 的真实状态码与响应体 | **403。** 错误 `details[0].metadata.method` 为 `google.learning.gemini.api.interactions.v1beta.InteractionsService.CreateInteractionHttp`，`service` 为 `generativelanguage.googleapis.com`，因此该方法真实存在，失败原因是鉴权而不是路径 |
-| 3. 流式形式 | 未推进（按停止条件中止） |
-| 4. `project` 的实际归属 | 未推进（未获得任何成功响应） |
-| 5. `id` 与 `previous_interaction_id` 语义 | 未推进 |
-| 6. 真实字段名是否与公开规范一致 | 未推进 |
-| 7. cache 计数 | 未推进 |
-| 8. `v1internal:*` 远端可达性 | 未推进 |
-| 额外确认 | 第 4 节问题的口径修正：既有凭据的刷新在真实 Google 端可用；`POST https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` 返回 200，`currentTier.id = free-tier` |
+| 凭据刷新 → `https://oauth2.googleapis.com/token` | 成功，换到新 access token |
+| `POST https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` | **200**，`currentTier.id = free-tier` |
+| `POST https://generativelanguage.googleapis.com/v1beta/interactions` | **403 `ACCESS_TOKEN_SCOPE_INSUFFICIENT`**；`www-authenticate` 要求 `https://www.googleapis.com/auth/generative-language*` |
 
-抓取文件在 Git 之外：`%TEMP%\antigravity-live-capture\01-loadcodeassist.*`、`02-interactions-create.*`（`authorization` 已替换为 `Bearer <redacted>`）。完整结论见 [[ANTIGRAVITY_NATIVE_INTERACTIONS_PROXY_REPORT_CN.md]] 第 4.1 与第 6 节。
+这一轮把 `generativelanguage.googleapis.com` 当成代理目标，是**产品面判断错误**：那是 AI Studio / Vertex 的公开 Interactions 后端，不是 Antigravity 的后端。它只证明公开接口真实存在，不证明 Antigravity 用它。
+
+### 8.2 第二轮：打到 Antigravity 自己的 origin
+
+客户端二进制中与 HTTP 相关的专有主机是 `cloudcode-pa.googleapis.com`、`daily-cloudcode-pa.googleapis.com`（含 sandbox 变体）与 `aicode.googleapis.com`。用同一凭据对前两台做真实调用，请求 envelope 与 Phase 1 记录一致（顶层 `model`、`userAgent: "antigravity"`、`requestType: "agent"`、`project`、`requestId: "agent-<uuid>"`、`request.sessionId`）：
+
+| 请求 | 实测结果 |
+| --- | --- |
+| `POST https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` | 200 |
+| `POST https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels` | 200，33 个模型，含 `gemini-3.8-flash-medium`、`claude-sonnet-4-6`、`gpt-oss-120b-medium` |
+| `POST https://cloudcode-pa.googleapis.com/v1internal:generateContent` | **429 `RESOURCE_EXHAUSTED`** |
+| `POST https://cloudcode-pa.googleapis.com/v1beta/interactions` | **404**（HTML 错误页） |
+| `POST https://cloudcode-pa.googleapis.com/v1internal:createInteraction` | **404** |
+| `POST https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` | 200 |
+| `POST https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels` | 200，同样 33 个模型 |
+| `POST https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent` | **200**，真实文本 `pong`，`finishReason=STOP`，`usageMetadata` 完整（`promptTokenCount 8`、`candidatesTokenCount 1`、`thoughtsTokenCount 65`） |
+| `POST https://daily-cloudcode-pa.googleapis.com/v1beta/interactions` | **404** |
+
+**上游按 UA 校验请求。** 同一条 `v1internal:generateContent` 请求，带上 Antigravity 的 UA（`antigravity/hub/2.9.1 darwin/arm64`）返回 200，换成 curl 的 UA 时返回 **403 `SUBSCRIPTION_REQUIRED`**（`reason: SUBSCRIPTION_REQUIRED`，`domain: cloudaicompanion.googleapis.com`）。
+
+这个 UA 有出处，不是猜的：CLIProxyAPI 的 `internal/runtime/executor/antigravity_executor.go`（`HttpRequest`）白名单式清空所有入站 header，只保留 `Content-Type` 并设置 `Authorization` 与 `User-Agent`；`antigravity_executor_request.go:124-127` 那三行就是完整的出站 header 集合；`internal/misc/antigravity_version.go:115-118` 把 UA 定义为 `antigravity/hub/<version> darwin/arm64`（默认版本 `2.9.1`）。
+
+因此 UA 属于鉴权指纹，由代理注入而不是由调用方提供。
+
+### 8.3 结论
+
+1. **Antigravity 专有的模型面是 Cloud Code 的 `v1internal:*`，实际可用主机是 `daily-cloudcode-pa.googleapis.com`。** 生成路径在 daily 上成功，在 prod 上对同一请求返回 429。
+2. **Antigravity 的 origin 上不存在 Interactions 路径。** `/v1beta/interactions` 与 `v1internal:createInteraction` 在两个 origin 上都是 404。
+3. **公开 Interactions 与 Antigravity 登录态不互通。** 公开接口真实存在（403 而非 404），但 Antigravity 登录的 scope 集合里没有 `generative-language*`，无法调用。
+4. 所以代理的固定上游应当配置为 `https://daily-cloudcode-pa.googleapis.com`，路径由调用方按 `v1internal:*` 给出。（本文第 2、4、7 节已按此更正。）
+
+完整结论与代理侧的端到端实测见 [[ANTIGRAVITY_NATIVE_INTERACTIONS_PROXY_REPORT_CN.md]] 第 4、6 节。

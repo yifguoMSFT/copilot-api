@@ -5,6 +5,7 @@ import { createServer } from "node:http"
 import { request as httpsRequest } from "node:https"
 
 import type { AntigravityCredentialStore } from "./auth"
+import { ANTIGRAVITY_USER_AGENT } from "./auth"
 
 /**
  * Headers that describe a single hop and must not be forwarded (RFC 9110).
@@ -229,13 +230,24 @@ function forwardRequestHeaders(
     if (value === undefined) continue
     if (HOP_BY_HOP.has(lower) || connectionTokens.has(lower)) continue
     if (FORWARDING_HEADERS.has(lower)) continue
-    // `host` is re-derived from the configured origin, and the caller's bearer
-    // token is replaced by the account's own.
-    if (lower === "host" || lower === "authorization") continue
+    // `host` is re-derived from the configured origin, the caller's bearer
+    // token is replaced by the account's own, and the UA is replaced by the
+    // Antigravity Hub fingerprint below.
+    if (
+      lower === "host"
+      || lower === "authorization"
+      || lower === "user-agent"
+    )
+      continue
     headers[lower] = Array.isArray(value) ? value.join(", ") : value
   }
 
   headers.authorization = `Bearer ${accessToken}`
+  // The upstream only answers the Antigravity Hub fingerprint: the same request
+  // without this UA is rejected with 403 `SUBSCRIPTION_REQUIRED`. CLIProxyAPI's
+  // executor sends the identical value, so this belongs to the auth injection
+  // rather than to passthrough.
+  headers["user-agent"] = ANTIGRAVITY_USER_AGENT
   return headers
 }
 

@@ -39,8 +39,11 @@ describe("parseAntigravityProxyArgs", () => {
     expect(DEFAULT_CREDENTIAL_PATH).toContain(".cli-proxy-api")
   })
 
-  test("defaults serve to loopback, a fixed port, and the HTTPS Interactions origin", () => {
+  test("defaults serve to loopback, a fixed port, and Antigravity's own origin", () => {
     const command = parseAntigravityProxyArgs(["serve"])
+    expect(DEFAULT_UPSTREAM_ORIGIN).toBe(
+      "https://daily-cloudcode-pa.googleapis.com",
+    )
     expect(command).toEqual({
       credentialPath: DEFAULT_CREDENTIAL_PATH,
       host: DEFAULT_LISTEN_HOST,
@@ -56,7 +59,7 @@ describe("parseAntigravityProxyArgs", () => {
       "--credential-file",
       "C:/creds/antigravity.json",
       "--upstream",
-      "https://generativelanguage.googleapis.com",
+      "https://cloudcode-pa.googleapis.com",
       "--host",
       "localhost",
       "--port",
@@ -65,7 +68,7 @@ describe("parseAntigravityProxyArgs", () => {
     const inline = parseAntigravityProxyArgs([
       "serve",
       "--credential-file=C:/creds/antigravity.json",
-      "--upstream=https://generativelanguage.googleapis.com",
+      "--upstream=https://cloudcode-pa.googleapis.com",
       "--host=localhost",
       "--port=51235",
     ])
@@ -75,7 +78,7 @@ describe("parseAntigravityProxyArgs", () => {
       host: "localhost",
       kind: "serve",
       port: 51_235,
-      upstreamOrigin: "https://generativelanguage.googleapis.com",
+      upstreamOrigin: "https://cloudcode-pa.googleapis.com",
     })
   })
 

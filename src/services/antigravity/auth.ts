@@ -41,8 +41,16 @@ export const ANTIGRAVITY_ENDPOINTS = {
 export const TOKEN_SAFETY_WINDOW_MS = 5 * 60 * 1000
 
 const REQUEST_TIMEOUT_MS = 30_000
-const REQUEST_USER_AGENT = "antigravity/hub/2.9.1 darwin/arm64"
-const ONBOARD_USER_AGENT = `${REQUEST_USER_AGENT} google-api-nodejs-client/10.3.0`
+/**
+ * The Antigravity Hub fingerprint every upstream request carries. Matches the
+ * CLIProxyAPI reference snapshot, whose executor
+ * (`internal/runtime/executor/antigravity_executor_request.go`) wipes all
+ * incoming headers and then sets exactly `Content-Type`, `Authorization`, and
+ * `misc.AntigravityUserAgent()`; `internal/misc/antigravity_version.go` builds
+ * that value as `antigravity/hub/<version> darwin/arm64`.
+ */
+export const ANTIGRAVITY_USER_AGENT = "antigravity/hub/2.9.1 darwin/arm64"
+const ONBOARD_USER_AGENT = `${ANTIGRAVITY_USER_AGENT} google-api-nodejs-client/10.3.0`
 const GOOG_API_CLIENT = "gl-node/22.21.1"
 const ONBOARD_ATTEMPTS = 5
 const ONBOARD_POLL_INTERVAL_MS = 2000
@@ -525,7 +533,7 @@ async function fetchUserInfo(
       headers: {
         accept: "application/json",
         authorization: `Bearer ${accessToken}`,
-        "user-agent": REQUEST_USER_AGENT,
+        "user-agent": ANTIGRAVITY_USER_AGENT,
       },
       method: "GET",
     },
@@ -561,7 +569,7 @@ async function discoverProjectId(
         accept: "*/*",
         authorization: `Bearer ${accessToken}`,
         "content-type": "application/json",
-        "user-agent": REQUEST_USER_AGENT,
+        "user-agent": ANTIGRAVITY_USER_AGENT,
       },
       method: "POST",
     },

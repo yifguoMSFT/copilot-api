@@ -11,7 +11,10 @@ import { createServer, request as httpRequest } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { AntigravityCredentialStore } from "../src/services/antigravity/auth"
+import {
+  ANTIGRAVITY_USER_AGENT,
+  AntigravityCredentialStore,
+} from "../src/services/antigravity/auth"
 import {
   AntigravityProxyError,
   createAntigravityProxyServer,
@@ -254,7 +257,7 @@ describe("Antigravity forwarding proxy", () => {
     )
   })
 
-  test("replaces the caller bearer and strips client-supplied forwarding headers", async () => {
+  test("replaces the caller bearer and user-agent, and strips forwarding headers", async () => {
     const upstream = await startUpstream(okHandler)
     const store = await credentialStore()
     const port = await startProxy(store, upstream.origin)
@@ -269,6 +272,7 @@ describe("Antigravity forwarding proxy", () => {
         "x-forwarded-for": "10.0.0.1",
         "x-real-ip": "10.0.0.1",
         "x-request-id": "req-1",
+        "user-agent": "curl/8.11.0",
       },
       path: "/v1beta/interactions",
     })
@@ -283,6 +287,9 @@ describe("Antigravity forwarding proxy", () => {
     expect(seen["x-forwarded-for"]).toBeUndefined()
     expect(seen["x-real-ip"]).toBeUndefined()
     expect(seen["x-dropped"]).toBeUndefined()
+    // Verified live on 2026-09-13: the upstream rejects any other UA with 403
+    // SUBSCRIPTION_REQUIRED, exactly as CLIProxyAPI's executor replaces it.
+    expect(seen["user-agent"]).toBe(ANTIGRAVITY_USER_AGENT)
   })
 
   test("streams the request body through unchanged, byte for byte", async () => {
