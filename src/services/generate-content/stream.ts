@@ -436,8 +436,8 @@ export class GenerateContentEventStream {
         output_index: this.completedItems.length,
         item: reasoningItem,
       })
-      // Unshift reasoning item so it appears before message output, matching Responses convention
-      this.completedItems.unshift(reasoningItem)
+      // Keep the final output order aligned with the index already emitted above.
+      this.completedItems.push(reasoningItem)
     }
 
     const isComplete = this.finishReason === "STOP"

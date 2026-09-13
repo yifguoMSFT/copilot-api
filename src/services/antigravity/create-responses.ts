@@ -69,13 +69,10 @@ export async function createAntigravityResponses(
     )
   }
 
-  // Derive stable session ID: check session-id, x-session-id, prompt_cache_key, or fallback
+  // Derive stable session ID from the client's session identity fields.
   const headerSessionId =
     options.headers?.get("session-id")
     ?? options.headers?.get("x-session-id")
-    ?? (typeof responsesReq.prompt_cache_key === "string" && responsesReq.prompt_cache_key.trim() !== ""
-      ? responsesReq.prompt_cache_key.trim()
-      : undefined)
     ?? (responsesReq.client_metadata && typeof responsesReq.client_metadata === "object" && typeof (responsesReq.client_metadata as Record<string, unknown>).session_id === "string"
       ? (responsesReq.client_metadata as Record<string, string>).session_id.trim()
       : undefined)
@@ -147,7 +144,11 @@ export async function createAntigravityResponses(
         stream.cancel()
         if ((err as any)?.name !== "AbortError") {
           controller.error(err)
+        } else {
+          controller.close()
         }
+      } finally {
+        await upstreamReader.cancel().catch(() => {})
       }
     },
     cancel() {

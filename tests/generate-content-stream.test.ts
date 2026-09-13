@@ -77,10 +77,10 @@ describe("GenerateContent SSE to Responses converter", () => {
     // Output items must contain the reasoning item (carrying thoughtSignature) and message item
     const outputs = resp.output as Array<Record<string, unknown>>
     expect(outputs.length).toBe(2)
-    expect(outputs[0].type).toBe("reasoning")
-    expect(String(outputs[0].encrypted_content).startsWith(STATE_CARRIER_PREFIX)).toBe(true)
-    expect(outputs[1].type).toBe("message")
-    expect(outputs[1].status).toBe("completed")
+    expect(outputs[0].type).toBe("message")
+    expect(outputs[0].status).toBe("completed")
+    expect(outputs[1].type).toBe("reasoning")
+    expect(String(outputs[1].encrypted_content).startsWith(STATE_CARRIER_PREFIX)).toBe(true)
 
     // Usage check
     const usage = resp.usage as Record<string, unknown>

@@ -123,4 +123,30 @@ describe("createAntigravityResponses in-process service", () => {
     const errBody = await response.json()
     expect(errBody.error.message).toBe("Quota exceeded")
   })
+
+  test("uses client_metadata session_id but never prompt_cache_key as session identity", async () => {
+    let capturedBody: any = null
+    const mockFetch = async (_url: string, init: any) => {
+      capturedBody = JSON.parse(init.body)
+      return new Response(
+        `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }] })}\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      )
+    }
+
+    const body = JSON.stringify({
+      model: "gemini-3.8-flash-tiered",
+      stream: true,
+      input: "hi",
+      prompt_cache_key: "cache-key-is-not-session",
+      client_metadata: { session_id: "body-session-1" },
+    })
+    const response = await createAntigravityResponses(body, {
+      credentialStore: mockStore,
+      fetchImpl: mockFetch as any,
+    })
+
+    expect(response.status).toBe(200)
+    expect(capturedBody.request.sessionId).toBe("body-session-1")
+  })
 })
