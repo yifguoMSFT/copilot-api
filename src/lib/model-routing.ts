@@ -2,6 +2,7 @@ import type { RuntimeConfig } from "./runtime-config"
 
 import { HttpStatusError } from "./error"
 import { resolveModelAlias } from "./model-aliases"
+import { ANTIGRAVITY_CODEX_MODEL } from "../services/antigravity/models"
 import { isModelSeparator } from "./model-separators"
 import {
   containsSourceSuffix,
@@ -10,7 +11,7 @@ import {
   type PublishedModels,
 } from "./model-sources"
 
-export type ModelProvider = "codex" | "copilot" | "deepseek"
+export type ModelProvider = "codex" | "copilot" | "deepseek" | "antigravity"
 
 export interface ModelRoute {
   provider: ModelProvider
@@ -29,9 +30,6 @@ export function resolveModelRoute(
       "Select a model below the separator",
       "model_separator",
     )
-  }
-  if (model === "codex-auto-review" && config.providers.codex.enabled) {
-    return { provider: "codex", requestedModel: model, upstreamModel: model }
   }
   // A published source-suffixed id decides both the upstream and the model the
   // upstream receives; anything else falls through to the legacy paths below.
@@ -55,6 +53,21 @@ export function resolveModelRoute(
     }
   } else {
     assertSourceIsRoutable(parsed.source, model, { config, published })
+  }
+
+  if (model === ANTIGRAVITY_CODEX_MODEL) {
+    if (!config.providers.antigravity.enabled) {
+      throw new HttpStatusError(
+        400,
+        `Antigravity provider is disabled for model: ${model}`,
+        "model_provider_disabled",
+      )
+    }
+    return {
+      provider: "antigravity",
+      requestedModel: model,
+      upstreamModel: model,
+    }
   }
 
   if (config.providers.deepseek.models.includes(model)) {

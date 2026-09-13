@@ -31,6 +31,7 @@ const layerSchema = z.strictObject({
       codex: codexSchema.optional(),
       copilot: providerSchema.optional(),
       deepseek: deepSeekSchema.optional(),
+      antigravity: z.strictObject({ enabled: z.boolean().optional(), credentialPath: z.string().min(1).optional() }).optional(),
     })
     .optional(),
 })
@@ -61,6 +62,10 @@ export interface RuntimeConfig {
       apiKey: string
       models: Array<string>
     }
+    antigravity: {
+      enabled: boolean
+      credentialPath?: string
+    }
   }
 }
 
@@ -90,6 +95,9 @@ export const defaultProviderConfig = (): Omit<
       baseUrl: "https://api.deepseek.com",
       apiKey: "",
       models: ["deepseek-flash", "deepseek-v4-pro"],
+    },
+    antigravity: {
+      enabled: false,
     },
   },
 })
@@ -138,6 +146,7 @@ export async function loadRuntimeConfig(
     !config.providers.copilot.enabled
     && !config.providers.deepseek.enabled
     && !config.providers.codex.enabled
+    && !config.providers.antigravity.enabled
   ) {
     throw new Error("At least one model provider must be enabled")
   }
@@ -155,6 +164,7 @@ function mergeLayer(
       codex: { ...base.providers.codex, ...overlay?.providers?.codex },
       copilot: { ...base.providers.copilot, ...overlay?.providers?.copilot },
       deepseek: { ...base.providers.deepseek, ...overlay?.providers?.deepseek },
+      antigravity: { ...base.providers.antigravity, ...overlay?.providers?.antigravity },
     },
   }
 }
@@ -216,5 +226,13 @@ function applyEnvironment(
   }
   if (env.COPILOT_API_CODEX_AUTH_PROFILE !== undefined) {
     config.providers.codex.authProfile = env.COPILOT_API_CODEX_AUTH_PROFILE
+  }
+  config.providers.antigravity.enabled =
+    parseBoolean(
+      "COPILOT_API_ANTIGRAVITY_ENABLED",
+      env.COPILOT_API_ANTIGRAVITY_ENABLED,
+    ) ?? config.providers.antigravity.enabled
+  if (env.COPILOT_API_ANTIGRAVITY_CREDENTIAL_PATH !== undefined) {
+    config.providers.antigravity.credentialPath = env.COPILOT_API_ANTIGRAVITY_CREDENTIAL_PATH
   }
 }

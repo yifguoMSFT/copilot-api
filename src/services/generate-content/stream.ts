@@ -427,6 +427,15 @@ export class GenerateContentEventStream {
         summary: [],
         encrypted_content: encodeStateCarrier(this.accumulatedParts),
       }
+      // Emit the output item lifecycle for streaming clients like Codex
+      this.emit("response.output_item.added", {
+        output_index: this.completedItems.length,
+        item: reasoningItem,
+      })
+      this.emit("response.output_item.done", {
+        output_index: this.completedItems.length,
+        item: reasoningItem,
+      })
       // Unshift reasoning item so it appears before message output, matching Responses convention
       this.completedItems.unshift(reasoningItem)
     }

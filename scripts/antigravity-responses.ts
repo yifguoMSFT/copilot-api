@@ -8,6 +8,8 @@ import {
 } from "../src/services/generate-content/convert"
 import { createGenerateContentEventStream } from "../src/services/generate-content/stream"
 import { assertLoopbackHost, resolveUpstreamOrigin } from "../src/services/antigravity/proxy"
+import { buildCloudCodeEnvelope } from "../src/services/antigravity/envelope"
+export { buildCloudCodeEnvelope }
 
 export const DEFAULT_PROXY_ORIGIN = "http://127.0.0.1:51234"
 export const DEFAULT_LISTEN_HOST = "127.0.0.1"
@@ -24,27 +26,7 @@ export interface AdapterOptions {
   fetchImpl?: typeof fetch
 }
 
-export function buildCloudCodeEnvelope(options: {
-  model: string
-  project: string
-  requestBody: JsonObject
-  sessionId: string
-  requestId?: string
-  requestType?: string
-  userAgent?: string
-}): JsonObject {
-  return {
-    model: options.model,
-    project: options.project,
-    request: {
-      ...options.requestBody,
-      sessionId: options.sessionId,
-    },
-    requestId: options.requestId ?? `agent-${randomUUID()}`,
-    requestType: options.requestType ?? DEFAULT_REQUEST_TYPE,
-    userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
-  }
-}
+// buildCloudCodeEnvelope imported from envelope.ts
 
 export function createAntigravityResponsesListener(
   options: AdapterOptions = {},

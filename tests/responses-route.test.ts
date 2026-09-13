@@ -357,3 +357,57 @@ describe("Responses routes", () => {
     })
   })
 })
+
+describe("Antigravity route forwarding", () => {
+  test("routes gemini-3.8-flash-tiered through handler to Antigravity Responses", async () => {
+    state.runtimeConfig = {
+      environment: "test",
+      providers: {
+        codex: { authProfile: "default", baseUrl: "https://chatgpt.com/backend-api/codex", enabled: false, models: [], transport: "http" },
+        copilot: { enabled: true, stripReasoningContentForGpt: true },
+        deepseek: { enabled: false, baseUrl: "https://api.deepseek.com", apiKey: "", models: [] },
+        antigravity: { enabled: true },
+      }
+    }
+
+    state.antigravityCredentialStore = {
+      current: async () => ({
+        access_token: "test-token",
+        project_id: "test-proj",
+        type: "antigravity",
+      }),
+    } as any
+
+    const originalFetch = globalThis.fetch
+    let capturedBody: any = null
+    globalThis.fetch = (async (_url: string, init: any) => {
+      capturedBody = JSON.parse(init.body)
+      return new Response("data: " + JSON.stringify({ candidates: [{ content: { parts: [{ text: "antigravity response" }] }, finishReason: "STOP" }] }) + "\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })
+    }) as any
+
+    try {
+      const app = server
+      const res = await app.request("/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "gemini-3.8-flash-tiered",
+          stream: true,
+          reasoning: { effort: "low" },
+          input: "hello",
+        }),
+      })
+
+      expect(res.status).toBe(200)
+      expect(capturedBody.model).toBe("gemini-3.8-flash-low")
+      expect(capturedBody.project).toBe("test-proj")
+      const text = await res.text()
+      expect(text).toContain("antigravity response")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})

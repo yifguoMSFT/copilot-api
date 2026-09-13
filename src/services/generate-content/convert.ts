@@ -41,6 +41,8 @@ export const STATE_CARRIER_PREFIX = "gcparts1."
 const MAX_CARRIER_BYTES = 1_048_576
 
 export interface ConversionOptions {
+  cleanSchema?: boolean
+
   /**
    * Tool identities declared for this request, keyed by upstream function
    * name. The response direction needs them to restore a namespace or a custom
@@ -64,11 +66,7 @@ const requestSchema = z.object({
       effort: z.enum(["minimal", "low", "medium", "high"]).optional(),
     })
     .optional(),
-  text: z
-    .object({
-      format: z.object({ type: z.literal("text") }).optional(),
-    })
-    .optional(),
+  text: z.record(z.string(), z.unknown()).optional(),
   parallel_tool_calls: z.boolean().optional(),
 })
 
@@ -179,7 +177,46 @@ function argumentsObject(value: unknown): JsonObject {
   }
 }
 
-function toolDefinition(tool: JsonObject): JsonObject {
+
+function cleanGeminiSchema(schema: unknown, defs: Record<string, unknown> = {}): unknown {
+  if (!schema || typeof schema !== "object") return schema
+  if (Array.isArray(schema)) return schema.map(x => cleanGeminiSchema(x, defs))
+
+  const obj = { ...(schema as Record<string, unknown>) }
+
+  // Resolve $defs / definitions
+  if (obj.$defs && typeof obj.$defs === "object") {
+    Object.assign(defs, obj.$defs)
+    delete obj.$defs
+  }
+  if (obj.definitions && typeof obj.definitions === "object") {
+    Object.assign(defs, obj.definitions)
+    delete obj.definitions
+  }
+
+  // Resolve $ref if present
+  if (typeof obj.$ref === "string") {
+    const refPath = obj.$ref
+    delete obj.$ref
+    const match = refPath.match(/^#\/(\$defs|definitions)\/(.+)$/)
+    if (match && defs[match[2]]) {
+      const resolved = cleanGeminiSchema(defs[match[2]], defs)
+      if (resolved && typeof resolved === "object" && !Array.isArray(resolved)) {
+        Object.assign(obj, resolved)
+      }
+    }
+  }
+
+  // Strip non-standard schema keywords rejected by Google Cloud Code
+  delete obj.encrypted
+
+  for (const [key, val] of Object.entries(obj)) {
+    obj[key] = cleanGeminiSchema(val, defs)
+  }
+  return obj
+}
+
+function toolDefinition(tool: JsonObject, options?: ConversionOptions): JsonObject {
   const name = parse(z.string().min(1), tool.name)
   if (
     tool.strict !== undefined
@@ -191,8 +228,9 @@ function toolDefinition(tool: JsonObject): JsonObject {
   if (tool.description !== undefined)
     result.description = parse(z.string(), tool.description)
   if (tool.type === "custom") {
+    // Custom tool format may be text or grammar (e.g. lark)
     if (tool.format !== undefined)
-      parse(z.object({ type: z.literal("text") }), tool.format)
+      parse(z.object({ type: z.string() }), tool.format)
     if (tool.parameters !== undefined)
       throw new GenerateContentConversionError(
         "custom tool cannot specify parameters",
@@ -210,7 +248,7 @@ function toolDefinition(tool: JsonObject): JsonObject {
     // The declared schema travels unchanged. Gemini documents an OpenAPI
     // subset, but dropping keywords here would silently rewrite a client
     // schema, so an unsupported keyword has to surface upstream instead.
-    result.parameters = structuredClone(object(tool.parameters))
+    result.parameters = options?.cleanSchema === true ? (cleanGeminiSchema(structuredClone(object(tool.parameters))) as JsonObject) : structuredClone(object(tool.parameters))
   } else {
     throw new GenerateContentConversionError(
       `Unsupported tool: ${String(tool.type)}`,
@@ -224,9 +262,13 @@ interface FlattenedTools {
   tools: Map<string, ToolIdentity>
 }
 
-function flattenTools(tools: ReadonlyArray<JsonObject>): FlattenedTools {
+function flattenTools(tools: ReadonlyArray<JsonObject>, options?: ConversionOptions): FlattenedTools {
   const result: FlattenedTools = { declarations: [], tools: new Map() }
   for (const tool of tools) {
+    if (tool.type === "web_search") {
+      // Client-side web_search tool without name is ignored for function declarations
+      continue
+    }
     if (tool.type === "namespace") {
       const namespace = parse(z.string().min(1), tool.name)
       const nested = parse(
@@ -238,7 +280,7 @@ function flattenTools(tools: ReadonlyArray<JsonObject>): FlattenedTools {
         const upstream = qualifiedToolName(namespace, name)
         if (result.tools.has(upstream))
           throw new GenerateContentConversionError("Duplicate tool name")
-        result.declarations.push(toolDefinition({ ...child, name: upstream }))
+        result.declarations.push(toolDefinition({ ...child, name: upstream }, options))
         result.tools.set(upstream, {
           name,
           namespace,
@@ -250,7 +292,7 @@ function flattenTools(tools: ReadonlyArray<JsonObject>): FlattenedTools {
     const name = parse(z.string().min(1), tool.name)
     if (result.tools.has(name))
       throw new GenerateContentConversionError("Duplicate tool name")
-    result.declarations.push(toolDefinition(tool))
+    result.declarations.push(toolDefinition(tool, options))
     result.tools.set(name, { name, custom: tool.type === "custom" })
   }
   return result
@@ -341,7 +383,11 @@ function callPart(item: JsonObject, calls: Map<string, string>): JsonObject {
     item.type === "function_call" ?
       argumentsObject(item.arguments)
     : { input: parse(z.string(), item.input) }
-  return { functionCall: { name, args } }
+  const res: JsonObject = { functionCall: { name, args } }
+  if (typeof item.thought_signature === "string" && item.thought_signature !== "") {
+    res.thoughtSignature = item.thought_signature
+  }
+  return res
 }
 
 function applyItem(state: ContentsState, item: JsonObject): void {
@@ -505,7 +551,7 @@ export function convertResponsesRequestToGenerateContent(
   const request = parse(requestSchema, value)
   assertResolvable(request)
   const { contents, system } = buildContents(request)
-  const flattened = flattenTools(request.tools ?? [])
+  const flattened = flattenTools(request.tools ?? [], options)
   const body: JsonObject = { contents }
   if (system.length > 0)
     body.systemInstruction = { parts: system.map((text) => ({ text })) }

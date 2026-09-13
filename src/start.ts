@@ -148,7 +148,7 @@ async function loadCodexBaseCatalog(
       ...(config.providers.deepseek.enabled ?
         deepSeekExtensionModels(config)
       : []),
-      ...antigravityCodexModels,
+            ...(config.providers.antigravity.enabled ? antigravityCodexModels : []),
     ],
     upstreamCacheFile: paths.cacheFile,
   })

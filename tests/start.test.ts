@@ -99,3 +99,9 @@ describe("provider bootstrap", () => {
     expect(dependencies.cacheModels).toHaveBeenCalledTimes(1)
   })
 })
+
+test("publishes antigravity model only when antigravity is enabled", async () => {
+  const { antigravityCodexModels } = await import("../src/services/antigravity/models")
+  expect(antigravityCodexModels.length).toBeGreaterThan(0)
+  expect(antigravityCodexModels[0].slug).toBe("gemini-3.8-flash-tiered")
+})

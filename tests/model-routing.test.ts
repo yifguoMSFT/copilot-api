@@ -35,14 +35,14 @@ test.each(["----codex----", "----deepseek----", "----copilot----"])(
 )
 
 test.each([true, false])(
-  "approval routing follows Codex enabled=%s",
+  "keeps approval reviews on the Copilot Luna alias while Codex enabled=%s",
   (enabled) => {
     const config = baseConfig()
     config.providers.codex.enabled = enabled
     expect(resolveModelRoute("codex-auto-review", config)).toEqual({
-      provider: enabled ? "codex" : "copilot",
+      provider: "copilot",
       requestedModel: "codex-auto-review",
-      upstreamModel: enabled ? "codex-auto-review" : "gpt-5.6-luna",
+      upstreamModel: "gpt-5.6-luna",
     })
   },
 )
@@ -263,4 +263,31 @@ test("allows a base model both providers can serve", () => {
       },
     }),
   ).not.toThrow()
+})
+
+test("routes gemini-3.8-flash-tiered to antigravity provider", () => {
+  const config = baseConfig()
+  config.providers.antigravity = { enabled: true }
+  expect(resolveModelRoute("gemini-3.8-flash-tiered", config)).toEqual({
+    provider: "antigravity",
+    requestedModel: "gemini-3.8-flash-tiered",
+    upstreamModel: "gemini-3.8-flash-tiered",
+  })
+})
+
+test("rejects gemini-3.8-flash-tiered when antigravity provider is disabled", () => {
+  const config = baseConfig()
+  config.providers.antigravity = { enabled: false }
+  expect(() => resolveModelRoute("gemini-3.8-flash-tiered", config)).toThrow(
+    "Antigravity provider is disabled for model: gemini-3.8-flash-tiered"
+  )
+})
+
+test("resolveAntigravityUpstreamModel maps low, medium, high to exact upstream model with medium default", async () => {
+  const { resolveAntigravityUpstreamModel } = await import("../src/services/antigravity/models")
+  expect(resolveAntigravityUpstreamModel("low")).toBe("gemini-3.8-flash-low")
+  expect(resolveAntigravityUpstreamModel("medium")).toBe("gemini-3.8-flash-medium")
+  expect(resolveAntigravityUpstreamModel("high")).toBe("gemini-3.8-flash-high")
+  expect(resolveAntigravityUpstreamModel()).toBe("gemini-3.8-flash-medium")
+  expect(resolveAntigravityUpstreamModel("unrecognized")).toBe("gemini-3.8-flash-medium")
 })
