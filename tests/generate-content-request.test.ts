@@ -59,6 +59,51 @@ function toolConfigOf(value: unknown): unknown {
 }
 
 describe("GenerateContent request turns and state", () => {
+  test("preserves a Responses tool search history item", () => {
+    const body = bodyOf({
+      input: [{
+        type: "tool_search_call",
+        id: "tsc-1",
+        call_id: "call-search",
+        status: "completed",
+        execution: "client",
+        arguments: { query: "weather" },
+      }],
+    })
+    expect(body.contents).toEqual([{
+      role: "model",
+      parts: [{ text: JSON.stringify({
+        type: "tool_search_call",
+        id: "tsc-1",
+        call_id: "call-search",
+        status: "completed",
+        execution: "client",
+        arguments: { query: "weather" },
+      }) }],
+    }])
+  })
+
+  test("merges tools discovered by tool search output", () => {
+    const body = bodyOf({
+      input: [{
+        type: "tool_search_output",
+        id: "tso-1",
+        call_id: "call-search",
+        status: "completed",
+        tools: [fn("weather")],
+      }],
+    })
+    expect(body.tools?.[0].functionDeclarations[0].name).toBe("weather")
+  })
+
+  test("ignores a native tool search declaration without inventing a function", () => {
+    const body = bodyOf({
+      input: "hi",
+      tools: [{ type: "tool_search" }],
+    })
+    expect(body.tools).toBeUndefined()
+  })
+
   test("maps instructions and text turns without mutating the input", () => {
     const input = {
       model: "anything",

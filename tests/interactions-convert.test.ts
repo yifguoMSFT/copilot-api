@@ -20,6 +20,54 @@ function reply(steps: Array<Record<string, unknown>>) {
 }
 
 describe("Interactions request conversion", () => {
+  test("preserves a Responses tool search history item", () => {
+    const result = request({
+      model: "gemini",
+      input: [{
+        type: "tool_search_call",
+        id: "tsc-1",
+        call_id: "call-search",
+        status: "completed",
+        execution: "client",
+        arguments: { query: "weather" },
+      }],
+    })
+    expect(result.body.input).toEqual([{
+      type: "model_output",
+      content: [{ type: "text", text: JSON.stringify({
+        type: "tool_search_call",
+        id: "tsc-1",
+        call_id: "call-search",
+        status: "completed",
+        execution: "client",
+        arguments: { query: "weather" },
+      }) }],
+    }])
+  })
+
+  test("merges tools discovered by tool search output", () => {
+    const result = request({
+      model: "gemini",
+      input: [{
+        type: "tool_search_output",
+        id: "tso-1",
+        call_id: "call-search",
+        status: "completed",
+        tools: [functionTool],
+      }],
+    })
+    expect(result.body.tools).toEqual([functionTool])
+  })
+
+  test("ignores a native tool search declaration without inventing a function", () => {
+    const result = request({
+      model: "gemini",
+      input: "hi",
+      tools: [{ type: "tool_search" }],
+    })
+    expect(result.body.tools).toBeUndefined()
+  })
+
   test("maps text, instructions, generation and metadata without mutating input", () => {
     const input = {
       model: "client-alias",

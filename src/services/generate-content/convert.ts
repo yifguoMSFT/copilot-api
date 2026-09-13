@@ -362,7 +362,8 @@ function mergeAdditionalTools(
   for (const tool of tools) collectToolNames(tool, declared)
   const merged = [...tools]
   for (const item of items) {
-    if (item.type !== "additional_tools") continue
+    if (item.type !== "additional_tools" && item.type !== "tool_search_output")
+      continue
     const additional = parse(
       z.array(z.record(z.string(), z.unknown())).optional(),
       item.tools,
@@ -375,10 +376,14 @@ function mergeAdditionalTools(
   return merged
 }
 
+function toolSearchText(item: JsonObject): JsonObject {
+  return { text: JSON.stringify(item) }
+}
+
 function flattenTools(tools: ReadonlyArray<JsonObject>, options?: ConversionOptions): FlattenedTools {
   const result: FlattenedTools = { declarations: [], tools: new Map() }
   for (const tool of tools) {
-    if (tool.type === "web_search") {
+    if (tool.type === "web_search" || tool.type === "tool_search") {
       // Client-side web_search tool without name is ignored for function declarations
       continue
     }
@@ -575,6 +580,14 @@ function applyItem(state: ContentsState, item: JsonObject): void {
   // Tools added mid-conversation travel as their own input item, so the
   // caller merges the declarations and the item stays out of the history.
   if (item.type === "additional_tools") return
+  if (item.type === "tool_search_call") {
+    pushModelPart(state, [toolSearchText(item)])
+    return
+  }
+  if (item.type === "tool_search_output") {
+    pushPart(state, "user", [toolSearchText(item)])
+    return
+  }
   if (item.role === "system" || item.role === "developer") {
     const text = messageTexts(item.content).join("")
     // GenerateContent has no developer role, so an instruction that arrives

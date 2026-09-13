@@ -182,6 +182,10 @@ function messageText(content: unknown): string {
   return messageTexts(content).join("")
 }
 
+function toolSearchText(item: JsonObject): string {
+  return JSON.stringify(item)
+}
+
 function toolDefinition(tool: JsonObject): JsonObject {
   const name = parse(z.string().min(1), tool.name)
   if (
@@ -315,6 +319,16 @@ function historyItem(
   parentReferenced: boolean,
 ): JsonObject {
   switch (item.type) {
+    case "tool_search_call":
+      return {
+        type: "model_output",
+        content: [{ type: "text", text: toolSearchText(item) }],
+      }
+    case "tool_search_output":
+      return {
+        type: "user_input",
+        content: [{ type: "text", text: toolSearchText(item) }],
+      }
     case undefined:
     case "message": {
       const role = parse(z.enum(["user", "assistant"]), item.role)
@@ -374,6 +388,78 @@ function historyItem(
   }
 }
 
+function collectToolNames(tool: JsonObject, names: Set<string>): void {
+  const name = typeof tool.name === "string" ? tool.name : undefined
+  if (name === undefined || name === "") return
+  if (tool.type !== "namespace") {
+    names.add(name)
+    return
+  }
+  if (!Array.isArray(tool.tools)) return
+  for (const child of tool.tools) {
+    if (child === null || typeof child !== "object" || Array.isArray(child))
+      continue
+    const childName = (child as JsonObject).name
+    if (typeof childName === "string" && childName !== "")
+      names.add(qualifiedToolName(name, childName))
+  }
+}
+
+function childNameOf(child: unknown): string | undefined {
+  if (child === null || typeof child !== "object" || Array.isArray(child))
+    return undefined
+  const name = (child as JsonObject).name
+  return typeof name === "string" && name !== "" ? name : undefined
+}
+
+function withoutDeclaredChildren(
+  tool: JsonObject,
+  declared: Set<string>,
+): JsonObject | undefined {
+  const name = typeof tool.name === "string" ? tool.name : undefined
+  if (name === undefined || name === "") return tool
+  if (tool.type !== "namespace") {
+    if (declared.has(name)) return undefined
+    declared.add(name)
+    return tool
+  }
+  if (!Array.isArray(tool.tools)) return tool
+  const children = tool.tools.filter((child) => {
+    const childName = childNameOf(child)
+    if (childName === undefined) return false
+    const upstream = qualifiedToolName(name, childName)
+    if (declared.has(upstream)) return false
+    declared.add(upstream)
+    return true
+  })
+  if (children.length === 0) return undefined
+  if (children.length === tool.tools.length) return tool
+  return { ...tool, tools: children }
+}
+
+function mergeHistoryTools(
+  tools: ReadonlyArray<JsonObject>,
+  items: z.infer<typeof requestSchema>["input"],
+): Array<JsonObject> {
+  if (!Array.isArray(items)) return [...tools]
+  const declared = new Set<string>()
+  for (const tool of tools) collectToolNames(tool, declared)
+  const merged = [...tools]
+  for (const item of items) {
+    if (item.type !== "additional_tools" && item.type !== "tool_search_output")
+      continue
+    const additional = parse(
+      z.array(z.record(z.string(), z.unknown())).optional(),
+      item.tools,
+    )
+    for (const tool of additional ?? []) {
+      const keep = withoutDeclaredChildren(tool, declared)
+      if (keep !== undefined) merged.push(keep)
+    }
+  }
+  return merged
+}
+
 const MODEL_TURN_STEPS = new Set(["model_output", "function_call", "thought"])
 
 /**
@@ -421,6 +507,7 @@ function history(
   const steps: Array<JsonObject> = []
   const calls = new Map<string, string>()
   for (const item of inputItems) {
+    if (item.type === "additional_tools") continue
     if (item.role === "system" || item.role === "developer") {
       if (steps.length > 0)
         throw new InteractionsConversionError(
@@ -445,6 +532,7 @@ function flattenTools(tools: ReadonlyArray<JsonObject>): FlattenedTools {
     tools: new Map(),
   }
   for (const tool of tools) {
+    if (tool.type === "tool_search" || tool.type === "web_search") continue
     if (tool.type === "namespace") {
       const namespace = parse(z.string().min(1), tool.name)
       const nested = parse(
@@ -514,7 +602,8 @@ export function convertResponsesRequestToInteractions(
     request.instructions,
     parentId !== undefined,
   )
-  const flattened = flattenTools(request.tools ?? [])
+  const declared = mergeHistoryTools(request.tools ?? [], request.input)
+  const flattened = flattenTools(declared)
   const tools = flattened.definitions
   const names = new Set(flattened.tools.keys())
   const body: JsonObject = {
@@ -525,7 +614,7 @@ export function convertResponsesRequestToInteractions(
   if (system.length > 0) body.system_instruction = system.join("\n\n")
   if (request.stream !== undefined) body.stream = request.stream
   if (parentId !== undefined) body.previous_interaction_id = parentId
-  if (request.tools !== undefined) body.tools = tools
+  if (tools.length > 0) body.tools = tools
   const generation = generationConfig(request, names)
   if (Object.keys(generation).length > 0) body.generation_config = generation
   const metadata: Record<string, unknown> = { ...options.metadata }
