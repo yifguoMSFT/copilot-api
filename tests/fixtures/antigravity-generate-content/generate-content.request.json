@@ -1,0 +1,23 @@
+{
+  "body": {
+    "model": "gemini-3.8-flash-medium",
+    "project": "aicode-consumers",
+    "request": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "Remember this marker: ab5ec571. Reply with OK."
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "sessionId": "-1789260955932"
+    },
+    "requestId": "agent-e4aec1d3-e5e1-4ea3-86d8-bffe4e8e94da",
+    "requestType": "agent",
+    "userAgent": "antigravity"
+  },
+  "path": "/v1internal:generateContent"
+}

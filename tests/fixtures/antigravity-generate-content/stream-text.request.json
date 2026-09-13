@@ -1,0 +1,23 @@
+{
+  "body": {
+    "model": "gemini-3.8-flash-medium",
+    "project": "aicode-consumers",
+    "request": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "Reply with exactly pong."
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "sessionId": "-1789260955932"
+    },
+    "requestId": "agent-0aeeec5d-93cb-4207-94cf-2fbf9dcf4346",
+    "requestType": "agent",
+    "userAgent": "antigravity"
+  },
+  "path": "/v1internal:streamGenerateContent?alt=sse"
+}
