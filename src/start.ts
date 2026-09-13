@@ -31,6 +31,7 @@ import { state } from "./lib/state"
 import { setupCopilotToken, setupGitHubToken } from "./lib/token"
 import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
 import { server } from "./server"
+import { antigravityCodexModels } from "./services/antigravity/models"
 
 interface RunServerOptions {
   port: number
@@ -143,8 +144,12 @@ async function loadCodexBaseCatalog(
   await refreshUpstreamCatalog({ cacheFile: paths.cacheFile })
   const base = await loadBaseCatalog({
     customFiles: paths.customFiles,
-    extensionModels:
-      config.providers.deepseek.enabled ? deepSeekExtensionModels(config) : [],
+    extensionModels: [
+      ...(config.providers.deepseek.enabled ?
+        deepSeekExtensionModels(config)
+      : []),
+      ...antigravityCodexModels,
+    ],
     upstreamCacheFile: paths.cacheFile,
   })
 
