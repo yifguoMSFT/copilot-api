@@ -37,7 +37,7 @@ const config = (
 
 const reasoningEntry = {
   type: "reasoning",
-  id: "reasoning-40",
+  id: "rs_reasoning-40",
   summary: [],
   encrypted_content: "cipher-40",
   content: [{ type: "reasoning_text", text: "hidden" }],
@@ -172,7 +172,7 @@ test("clears GPT reasoning content by default and keeps other fields", async () 
   expect(outbound.store).toBe(false)
   expect(outbound.input).toHaveLength(41)
   expect(outbound.input[40]?.content).toEqual([])
-  expect(outbound.input[40]?.id).toBe("reasoning-40")
+  expect(outbound.input[40]?.id).toBe("rs_reasoning-40")
   expect(outbound.input[40]?.summary).toEqual([])
   expect(Object.hasOwn(outbound.input[40] ?? {}, "encrypted_content")).toBe(
     false,

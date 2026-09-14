@@ -107,10 +107,10 @@ const forwarded = (index = 0): [string, RequestInit] =>
   fetchMock.mock.calls[index] as [string, RequestInit]
 
 describe("Codex passthrough forwarding", () => {
-  test("sends approval to Codex unchanged and strips encrypted-only reasoning", async () => {
+  test("strips encrypted-only reasoning before forwarding to Codex", async () => {
     const response = await post(
       JSON.stringify({
-        model: "codex-auto-review",
+        model: CODEX_MODEL,
         input: [
           {
             type: "reasoning",
@@ -124,7 +124,7 @@ describe("Codex passthrough forwarding", () => {
     const [url, init] = forwarded()
     expect(url).toBe("https://chatgpt.com/backend-api/codex/responses")
     expect(await new Response(init.body).json()).toEqual({
-      model: "codex-auto-review",
+      model: "codex-test-model",
       input: [{ type: "reasoning", summary: [] }],
     })
     expect(new Headers(init.headers).get("authorization")).toBe(
@@ -339,40 +339,6 @@ describe("Codex passthrough authentication failures", () => {
     const payload = (await response.json()) as { error: { code: string } }
     expect(payload.error.code).toBe("codex_auth_unavailable")
     expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  test("logs the approval response when the Codex login is missing", async () => {
-    state.codexAuthManager = authManagerWith(() =>
-      Promise.reject(
-        new CodexAuthRequiredError("No Codex credentials are stored"),
-      ),
-    )
-
-    const response = await post(
-      JSON.stringify({ model: "codex-auto-review", input: [] }),
-    )
-    await response.text()
-
-    expect(response.status).toBe(503)
-    expect(infoMock).toHaveBeenCalledWith("Request sent to codex-auto-review")
-    expect(infoMock).toHaveBeenCalledWith(
-      expect.stringMatching(
-        /^Codex forward: profile=\S+ baseUrl=\S+ bodyBytes=\d+$/,
-      ),
-    )
-    expect(warnMock).toHaveBeenCalledWith(
-      expect.stringContaining("Codex forward: authentication failed"),
-      "No Codex credentials are stored",
-    )
-    expect(infoMock).toHaveBeenCalledWith(
-      expect.stringMatching(
-        /^Response received from codex-auto-review: 503 in \d+ms$/,
-      ),
-    )
-    expect(infoMock).toHaveBeenCalledWith(
-      "codex-auto-review output:",
-      expect.stringContaining('"code":"codex_login_required"'),
-    )
   })
 })
 

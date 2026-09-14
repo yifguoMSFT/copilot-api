@@ -103,10 +103,10 @@ describe("Interactions item identity", () => {
     // The upstream interaction id is used verbatim when it exists.
     expect(
       itemIds(response({ ...unnamed, id: "v1_named" }, { tools: weatherTool })),
-    ).toEqual(["v1_named_0"])
+    ).toEqual(["fc_v1_named_0"])
     expect(
       itemIds(response(unnamed, { itemIdScope: "pinned", tools: weatherTool })),
-    ).toEqual(["pinned_0"])
+    ).toEqual(["fc_pinned_0"])
   })
 
   test("keeps message text but cannot carry Responses phase or status", () => {

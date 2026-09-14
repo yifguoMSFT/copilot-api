@@ -15,13 +15,6 @@ import { formatSourceModel, parseSourceModel } from "./model-sources"
 const CATALOG_URL =
   "https://raw.githubusercontent.com/openai/codex/refs/heads/main/codex-rs/models-manager/models.json"
 
-/**
- * Reviewer id the Codex client asks for. Without an explicit override the
- * client reviews with the session's own model, so approvals would spend that
- * provider's quota instead of the Codex login's.
- */
-const AUTO_REVIEW_MODEL = "codex-auto-review"
-
 const catalogSchema = z.looseObject({
   models: z.array(z.looseObject({ slug: z.string().min(1) })),
 })
@@ -252,11 +245,14 @@ export async function refreshUpstreamCatalog(
  */
 export function buildCatalogEntries(options: {
   base: BaseCatalog
+  /** Configured DeepSeek ids, which do not have to carry the deepseek- prefix. */
+  deepSeekModels?: Iterable<string>
   published: PublishedModels
 }): Array<CodexCatalogEntry> {
   const { base, published } = options
+  const deepSeekModels = new Set(options.deepSeekModels ?? [])
   if (!published.suffixMode)
-    return sortCatalogEntries([...base.entries.values()])
+    return sortCatalogEntries([...base.entries.values()], deepSeekModels)
 
   const variantsByBase = new Map<string, Array<string>>()
   for (const entry of published.entries.values()) {
@@ -287,33 +283,24 @@ export function buildCatalogEntries(options: {
       entries.push(mapped)
     }
   }
-  return sortCatalogEntries(
-    base.entries.has(AUTO_REVIEW_MODEL) ?
-      entries.map((entry) => withAutoReviewOverride(entry))
-    : entries,
-  )
+  return sortCatalogEntries(entries, deepSeekModels)
 }
 
-/**
- * Keeps the reviewer on the Codex login for every selectable model. The alias
- * entry itself stays bare; it is the target of the override, not a source of
- * one.
- */
-function withAutoReviewOverride(entry: CodexCatalogEntry): CodexCatalogEntry {
-  const slug = String(entry.slug)
-  if (isModelAlias(slug)) return entry
-  if (typeof entry.auto_review_model_override === "string") return entry
-  return { ...entry, auto_review_model_override: AUTO_REVIEW_MODEL }
-}
+/** A configured DeepSeek id groups with DeepSeek whether or not it keeps the prefix. */
+const isDeepSeekCatalogId = (
+  slug: string,
+  deepSeekModels: ReadonlySet<string>,
+): boolean => deepSeekModels.has(slug) || slug.startsWith("deepseek-")
 
 /** Keep the file order and Codex's priority-based picker order consistent. */
 function sortCatalogEntries(
   entries: Array<CodexCatalogEntry>,
+  deepSeekModels: ReadonlySet<string>,
 ): Array<CodexCatalogEntry> {
   const rank = (entry: CodexCatalogEntry): number => {
     const slug = String(entry.slug)
     if (parseSourceModel(slug)?.source === "codex") return 0
-    return slug.startsWith("deepseek-") ? 1 : 2
+    return isDeepSeekCatalogId(slug, deepSeekModels) ? 1 : 2
   }
   return entries
     .toSorted((a, b) => rank(a) - rank(b))
@@ -361,6 +348,8 @@ function remapSameSourceReferences(
 
 export interface WritePublishedCatalogOptions {
   base: BaseCatalog
+  /** Configured DeepSeek ids, used to group them under the DeepSeek separator. */
+  deepSeekModels?: Iterable<string>
   outputFile: string
   published: PublishedModels
 }
@@ -369,19 +358,21 @@ export interface WritePublishedCatalogOptions {
 export async function writePublishedCatalog(
   options: WritePublishedCatalogOptions,
 ): Promise<void> {
+  const deepSeekModels = new Set(options.deepSeekModels ?? [])
   const models = buildCatalogEntries({
     base: options.base,
+    deepSeekModels,
     published: options.published,
   })
   await writeCatalogFile(options.outputFile, {
     ...options.base.metadata,
     models: addModelSeparators(
       models.filter((entry) => !isModelSeparator(String(entry.slug))),
-      (entry) =>
-        parseSourceModel(String(entry.slug))?.source
-        ?? (String(entry.slug).startsWith("deepseek-") ?
-          "deepseek"
-        : "copilot"),
+      (entry) => {
+        const slug = String(entry.slug)
+        if (isDeepSeekCatalogId(slug, deepSeekModels)) return "deepseek"
+        return parseSourceModel(slug)?.source ?? "copilot"
+      },
       (entry, id) => ({
         ...entry,
         slug: id,

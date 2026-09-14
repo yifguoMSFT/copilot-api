@@ -20,7 +20,10 @@ import {
   defaultProviderConfig,
   type RuntimeConfig,
 } from "../src/lib/runtime-config"
-import { deepSeekCodexModels } from "../src/providers/deepseek/models"
+import {
+  deepSeekCodexModel,
+  deepSeekCodexModels,
+} from "../src/providers/deepseek/models"
 
 let directory: string
 let fetchMock: ReturnType<typeof spyOn<typeof globalThis, "fetch">>
@@ -418,12 +421,10 @@ test("keeps a local alias bare while the Codex provider is enabled", () => {
     "gpt-5.6-luna(copilot)",
     "codex-auto-review",
   ])
-  // Approvals must leave the session model behind, otherwise the reviewer
-  // spends the Copilot or DeepSeek quota instead of the Codex login's.
   expect(models.find((model) => model.slug === "gpt-5.6-luna(codex)")) //
-    .toMatchObject({ auto_review_model_override: "codex-auto-review" })
+    .not.toHaveProperty("auto_review_model_override")
   expect(models.find((model) => model.slug === "gpt-5.6-luna(copilot)")) //
-    .toMatchObject({ auto_review_model_override: "codex-auto-review" })
+    .not.toHaveProperty("auto_review_model_override")
   expect(models.find((model) => model.slug === "codex-auto-review")) //
     .not.toHaveProperty("auto_review_model_override")
 })
@@ -526,6 +527,60 @@ test("assigns picker priorities in provider order without mutating definitions",
     { slug: "gpt-5.6-luna(copilot)", priority: 3 },
   ])
   expect(definitions.map((model) => model.priority)).toEqual([1, 1, 8])
+})
+
+test("falls back to a usable definition for a configured id without a built-in entry", () => {
+  expect(deepSeekCodexModel("deepseek-flash")).toBe(deepSeekCodexModels[0])
+  expect(deepSeekCodexModel("zen-go-lite")).toMatchObject({
+    display_name: "zen-go-lite",
+    shell_type: "shell_command",
+    slug: "zen-go-lite",
+    supported_in_api: true,
+    visibility: "list",
+  })
+})
+
+test("groups a configured DeepSeek id under its separator without the prefix", async () => {
+  const cacheFile = path.join(directory, "codex-models-upstream.json")
+  await fs.writeFile(
+    cacheFile,
+    JSON.stringify({
+      models: [{ slug: "gpt-5.6-luna" }, { slug: "gpt-5.5" }],
+    }),
+  )
+  const base = await loadBaseCatalog({
+    customFiles: [],
+    extensionModels: [deepSeekCodexModel("zen-go-lite")],
+    upstreamCacheFile: cacheFile,
+  })
+  const config = codexEnabledConfig(["gpt-5.6-luna"])
+  config.providers.deepseek.enabled = true
+  config.providers.deepseek.models = ["zen-go-lite"]
+  const published = buildPublishedModels({
+    catalog: base.entries,
+    config,
+    copilotModels: ["gpt-5.5"],
+    officialModels: base.officialModels,
+  })
+  const outputFile = path.join(directory, "generated", "codex-models.json")
+
+  await writePublishedCatalog({
+    base,
+    deepSeekModels: config.providers.deepseek.models,
+    outputFile,
+    published,
+  })
+
+  const written = JSON.parse((await fs.readFile(outputFile)).toString()) as {
+    models: Array<{ slug: string }>
+  }
+  const slugs = written.models.map((model) => model.slug)
+
+  expect(slugs.filter((slug) => slug === "----deepseek----")).toHaveLength(1)
+  expect(slugs.indexOf("zen-go-lite")).toBe(
+    slugs.indexOf("----deepseek----") + 1,
+  )
+  expect(slugs.filter((slug) => slug === "----copilot----")).toHaveLength(1)
 })
 
 test("publishes bare definitions while the Codex provider is disabled", async () => {

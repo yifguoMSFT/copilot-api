@@ -7,7 +7,7 @@ import path from "node:path"
 import { serve } from "srvx"
 import invariant from "tiny-invariant"
 
-import { deepSeekCodexModels } from "~/providers/deepseek/models"
+import { deepSeekCodexModel } from "~/providers/deepseek/models"
 
 import { createCodexCredentialStore } from "./lib/codex-credentials"
 import {
@@ -179,9 +179,7 @@ async function loadCodexBaseCatalog(
 const deepSeekExtensionModels = (
   config: RuntimeConfig,
 ): Array<Record<string, unknown>> =>
-  deepSeekCodexModels.filter((model) =>
-    config.providers.deepseek.models.includes(String(model.slug)),
-  )
+  config.providers.deepseek.models.map((slug) => deepSeekCodexModel(slug))
 
 /**
  * Publishes the public model ids once the Copilot catalogue is known, writes
@@ -204,7 +202,12 @@ async function publishModels(
     officialModels: base.officialModels,
   })
   state.publishedModels = published
-  await writePublishedCatalog({ base, outputFile: catalogFile, published })
+  await writePublishedCatalog({
+    base,
+    deepSeekModels: config.providers.deepseek.models,
+    outputFile: catalogFile,
+    published,
+  })
   consola.info(
     published.suffixMode ?
       `Published ${published.entries.size} source-suffixed model ids`

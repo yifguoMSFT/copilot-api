@@ -40,8 +40,10 @@ export interface ToolIdentity {
 export function responseItemId(
   scope: string | undefined,
   index: number,
+  prefix?: string,
 ): string {
-  return `${scope ?? "step"}_${index}`
+  const base = `${scope ?? "step"}_${index}`
+  return prefix ? `${prefix}_${base}` : base
 }
 
 const textContent = z.strictObject({
@@ -643,7 +645,8 @@ export function convertInteractionStep(
   index: number,
   options: ConversionOptions = {},
 ): JsonObject | undefined {
-  const id = responseItemId(options.itemIdScope, index)
+  const prefix = step.type === "function_call" ? (options.tools?.get(String(step.name))?.custom ? "ctc" : "fc") : step.type === "thought" ? "rs" : "msg"
+  const id = responseItemId(options.itemIdScope, index, prefix)
   switch (step.type) {
     case "user_input":
     case "function_result": {

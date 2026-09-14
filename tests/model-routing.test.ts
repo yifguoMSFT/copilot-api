@@ -26,13 +26,25 @@ const baseConfig = (): RuntimeConfig => ({
 })
 
 test.each(["----codex----", "----deepseek----", "----copilot----"])(
-  "rejects the display-only separator %s before routing",
+  "answers the display-only separator %s on the cheap Copilot Luna tier",
   (id) => {
-    expect(() => resolveModelRoute(id, baseConfig())).toThrow(
-      "Select a model below the separator",
-    )
+    expect(resolveModelRoute(id, baseConfig())).toEqual({
+      provider: "copilot",
+      reasoningEffort: "low",
+      requestedModel: id,
+      upstreamModel: "gpt-5.6-luna",
+    })
   },
 )
+
+test("rejects a separator when no Copilot reviewer can answer it", () => {
+  const config = baseConfig()
+  config.providers.copilot.enabled = false
+
+  expect(() => resolveModelRoute("----codex----", config)).toThrow(
+    "needs the Copilot provider",
+  )
+})
 
 test.each([true, false])(
   "keeps approval reviews on the Copilot Luna alias while Codex enabled=%s",

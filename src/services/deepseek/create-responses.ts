@@ -1,10 +1,19 @@
 import type { RuntimeConfig } from "~/lib/runtime-config"
 
+export interface CreateDeepSeekResponsesOptions {
+  signal?: AbortSignal
+  headers?: Headers
+}
+
 export async function createDeepSeekResponses(
   body: RequestInit["body"],
   config: RuntimeConfig["providers"]["deepseek"],
-  signal?: AbortSignal,
+  optionsOrSignal?: CreateDeepSeekResponsesOptions | AbortSignal,
 ): Promise<Response> {
+  const options =
+    optionsOrSignal instanceof AbortSignal ?
+      { signal: optionsOrSignal }
+    : (optionsOrSignal ?? {})
   const apiKey = config.apiKey.trim()
   if (!apiKey) throw new Error("Missing DeepSeek API key")
 
@@ -21,16 +30,28 @@ export async function createDeepSeekResponses(
   ) {
     throw new Error("DeepSeek base URL must use HTTPS")
   }
-  const url = `${baseUrl.toString().replace(/\/$/, "")}/responses`
+  // A base URL may already name the Responses endpoint; anything else gets it appended.
+  const normalized = baseUrl.toString().replace(/\/+$/, "")
+  const url =
+    normalized.endsWith("/responses") ? normalized : `${normalized}/responses`
+
+  const requestHeaders: Record<string, string> = {
+    authorization: `Bearer ${apiKey}`,
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  }
+
+  const sessionId =
+    options.headers?.get("session-id") ?? options.headers?.get("x-session-id")
+  if (sessionId) {
+    requestHeaders["session-id"] = sessionId
+  }
+
   return await fetch(url, {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
+    headers: requestHeaders,
     body,
-    signal,
+    signal: options.signal,
     redirect: "manual",
   })
 }

@@ -80,8 +80,9 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 }
 
 /** Item id scoped to one response, so ids never repeat between responses. */
-export function responseItemId(scope: string | undefined, index: number): string {
-  return `${scope ?? "step"}_${index}`
+export function responseItemId(scope: string | undefined, index: number, prefix?: string): string {
+  const base = `${scope ?? "step"}_${index}`
+  return prefix ? `${prefix}_${base}` : base
 }
 
 export function object(value: unknown): JsonObject {

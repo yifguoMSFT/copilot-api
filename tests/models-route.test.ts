@@ -101,6 +101,22 @@ describe("model catalogue", () => {
       "codex-auto-review",
     ])
   })
+  test("lists a configured DeepSeek id that keeps no deepseek- prefix", async () => {
+    const config = withCodex(["gpt-5.6-luna"])
+    config.providers.deepseek.enabled = true
+    config.providers.deepseek.models = ["zen-go-lite"]
+    state.runtimeConfig = config
+    state.publishedModels = publishedFor(
+      config,
+      ["gpt-5.6-luna"],
+      ["gpt-5.6-luna"],
+    )
+
+    const { data } = await listModels("/v1/models")
+    const ids = data.map((model) => String(model.id))
+
+    expect(ids.indexOf("zen-go-lite")).toBe(ids.indexOf("----deepseek----") + 1)
+  })
   test("publishes one suffixed entry per source and hides the bare id", async () => {
     const config = withCodex(["gpt-5.6-luna"])
     state.models = {

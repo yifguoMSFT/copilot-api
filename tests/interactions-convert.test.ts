@@ -432,7 +432,7 @@ describe("Interactions tool namespaces", () => {
     expect(called.output).toEqual([
       {
         type: "function_call",
-        id: "v1_original_0",
+        id: "fc_v1_original_0",
         call_id: "fc_1",
         name: "lookup",
         namespace: "mcp__demo",
@@ -461,7 +461,7 @@ describe("Interactions tool namespaces", () => {
     expect(called.output).toEqual([
       {
         type: "custom_tool_call",
-        id: "v1_original_0",
+        id: "ctc_v1_original_0",
         call_id: "fc_2",
         name: "patch",
         namespace: "mcp__demo",
@@ -648,7 +648,7 @@ describe("Interactions JSON responses", () => {
     expect(converted.output).toEqual([
       {
         type: "function_call",
-        id: "v1_original_0",
+        id: "fc_v1_original_0",
         call_id: "c1",
         name: "weather",
         arguments: '{"city":"x"}',
@@ -656,7 +656,7 @@ describe("Interactions JSON responses", () => {
       },
       {
         type: "custom_tool_call",
-        id: "v1_original_1",
+        id: "ctc_v1_original_1",
         call_id: "c2",
         name: "patch",
         input: "raw\n",

@@ -356,6 +356,84 @@ describe("Responses routes", () => {
       },
     })
   })
+
+  test("preserves native Responses item IDs and tool fields", async () => {
+    const previousConfig = state.runtimeConfig
+    state.runtimeConfig = {
+      environment: "test",
+      providers: {
+        ...defaultProviderConfig().providers,
+        copilot: { enabled: true, stripReasoningContentForGpt: true },
+        deepseek: {
+          enabled: true,
+          baseUrl: "https://api.deepseek.com",
+          apiKey: "test-deepseek-key",
+          models: ["deepseek-flash"],
+        },
+      },
+    }
+    const body = JSON.stringify({
+      model: "deepseek-flash",
+      input: [
+        {
+          type: "function_call",
+          id: "native-call-id",
+          call_id: "native-call-id",
+          name: "exec",
+          arguments: "{}",
+        },
+        {
+          type: "function_call_output",
+          call_id: "native-call-id",
+          output: "ok",
+        },
+      ],
+      tools: [{ type: "function", name: "exec" }],
+    })
+    try {
+      await post("/v1/responses", body)
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+      expect(await new Response(init.body).text()).toBe(body)
+    } finally {
+      // eslint-disable-next-line require-atomic-updates
+      state.runtimeConfig = previousConfig
+    }
+  })
+
+  test("answers a section header on the cheap Copilot reviewer at low effort", async () => {
+    const previousConfig = state.runtimeConfig
+    state.runtimeConfig = {
+      environment: "test",
+      providers: {
+        ...defaultProviderConfig().providers,
+        copilot: { enabled: true, stripReasoningContentForGpt: true },
+      },
+    }
+    // Codex sends its own background turns, such as thread titles, with the
+    // first id of the catalog, which is a display-only header.
+    const body = JSON.stringify({
+      model: "----codex----",
+      input: [{ type: "message", role: "user", content: "title this thread" }],
+      reasoning: { effort: "max", summary: "auto" },
+    })
+
+    try {
+      const response = await post("/v1/responses", body)
+
+      expect(response.status).toBe(200)
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+      expect(url.endsWith("/responses")).toBe(true)
+      const forwarded = JSON.parse(await new Response(init.body).text()) as {
+        model: string
+        reasoning: Record<string, unknown>
+      }
+      expect(forwarded.model).toBe("gpt-5.6-luna")
+      expect(forwarded.reasoning).toEqual({ effort: "low", summary: "auto" })
+    } finally {
+      // eslint-disable-next-line require-atomic-updates
+      state.runtimeConfig = previousConfig
+    }
+  })
 })
 
 describe("Antigravity route forwarding", () => {

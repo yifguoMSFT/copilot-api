@@ -19,6 +19,7 @@ import { join } from "node:path"
 
 import { toCodexAuthErrorResponse } from "./codex-passthrough"
 import { stripReasoningContent } from "./gpt-reasoning-content"
+import { sanitizeInputItemIds } from "./sanitize-input-ids"
 import { normalizeResponsesItemIds } from "./sse-item-id-normalizer"
 
 const forwardedResponseHeaders = [
@@ -114,7 +115,10 @@ export async function handleResponse(c: Context): Promise<Response> {
     upstream = await createDeepSeekResponses(
       upstreamBody,
       deepSeekConfig,
-      upstreamSignal,
+      {
+        signal: upstreamSignal,
+        headers: c.req.raw.headers,
+      },
     )
   } else {
     upstream = await createResponses(upstreamBody, upstreamSignal)
@@ -217,6 +221,21 @@ const formatModelLabel = (requestedModel?: string): string => {
   return `${requestedModel} (${resolvedModel})`
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+/**
+ * Header turns run on the cheap Copilot reviewer, so the tier is pinned there
+ * whatever the client asked for; every other reasoning field is preserved.
+ */
+const withReasoningEffort = (
+  payload: Record<string, unknown>,
+  effort: string,
+): Record<string, unknown> => {
+  const reasoning = isRecord(payload.reasoning) ? payload.reasoning : {}
+  return { ...payload, reasoning: { ...reasoning, effort } }
+}
+
 const resolveResponseModel = (
   body: ArrayBuffer,
 ): {
@@ -255,8 +274,25 @@ const resolveResponseModel = (
     let nextPayload: Record<string, unknown> = payload
     let changed = false
 
+    if (
+      route.provider !== "deepseek"
+      && Array.isArray(nextPayload.input)
+    ) {
+      const sanitizedIds = sanitizeInputItemIds(nextPayload.input)
+      if (sanitizedIds.changed) {
+        nextPayload = { ...nextPayload, input: sanitizedIds.input }
+        changed = true
+        consola.info(`Sanitized ${sanitizedIds.renamedCount} input item IDs to conform with Responses protocol`)
+      }
+    }
+
     if (route.upstreamModel !== payload.model) {
       nextPayload = { ...nextPayload, model: route.upstreamModel }
+      changed = true
+    }
+
+    if (route.reasoningEffort !== undefined) {
+      nextPayload = withReasoningEffort(nextPayload, route.reasoningEffort)
       changed = true
     }
 

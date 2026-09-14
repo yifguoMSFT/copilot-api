@@ -325,8 +325,9 @@ export class InteractionsEventStream {
   }
 
   private coordinates(state: StepState): JsonObject {
+    const prefix = state.step.type === "function_call" ? (this.options.tools?.get(String(state.step.name))?.custom ? "ctc" : "fc") : state.step.type === "thought" ? "rs" : "msg"
     return {
-      item_id: responseItemId(this.options.itemIdScope, state.index),
+      item_id: responseItemId(this.options.itemIdScope, state.index, prefix),
       output_index: state.outputIndex,
     }
   }

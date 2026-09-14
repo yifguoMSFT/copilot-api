@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import "./lib/system-ca"
+
 import { defineCommand, runMain } from "citty"
 
 import { auth } from "./auth"

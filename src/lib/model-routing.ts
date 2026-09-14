@@ -17,7 +17,20 @@ export interface ModelRoute {
   provider: ModelProvider
   requestedModel: string
   upstreamModel: string
+  /**
+   * Reasoning tier the request has to run at, set when the client named a
+   * display-only header rather than a model.
+   */
+  reasoningEffort?: "low"
 }
+
+/**
+ * Codex runs its own background turns, such as generating a thread title, with
+ * whichever id the model catalog lists first. That entry is a display-only
+ * header, and a header names no group member, so those turns land on the cheap
+ * Copilot reviewer instead of spending the provider the header groups.
+ */
+const INTERNAL_REQUEST_MODEL = "codex-auto-review"
 
 export function resolveModelRoute(
   model: string,
@@ -25,11 +38,18 @@ export function resolveModelRoute(
   published?: PublishedModels,
 ): ModelRoute {
   if (isModelSeparator(model)) {
-    throw new HttpStatusError(
-      400,
-      "Select a model below the separator",
-      "model_separator",
-    )
+    if (!config.providers.copilot.enabled) {
+      throw new HttpStatusError(
+        400,
+        `Section header ${model} needs the Copilot provider for the background requests Codex sends instead of a model`,
+        "model_separator",
+      )
+    }
+    return {
+      ...resolveModelRoute(INTERNAL_REQUEST_MODEL, config, published),
+      reasoningEffort: "low",
+      requestedModel: model,
+    }
   }
   // A published source-suffixed id decides both the upstream and the model the
   // upstream receives; anything else falls through to the legacy paths below.
