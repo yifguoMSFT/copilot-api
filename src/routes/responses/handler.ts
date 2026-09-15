@@ -21,6 +21,7 @@ import { join } from "node:path"
 import { toCodexAuthErrorResponse } from "./codex-passthrough"
 import { stripReasoningContent } from "./gpt-reasoning-content"
 import { sanitizeInputItemIds } from "./sanitize-input-ids"
+import { stripRejectedToolCalls } from "./strip-rejected-tool-calls"
 import { normalizeResponsesItemIds } from "./sse-item-id-normalizer"
 
 const forwardedResponseHeaders = [
@@ -282,6 +283,19 @@ const resolveResponseModel = (
     )
     let nextPayload: Record<string, unknown> = payload
     let changed = false
+
+    if (Array.isArray(nextPayload.input)) {
+      const rejectedCalls = stripRejectedToolCalls(nextPayload.input)
+      if (rejectedCalls.changed) {
+        nextPayload = { ...nextPayload, input: rejectedCalls.input }
+        changed = true
+        consola.info(
+          `Dropped ${rejectedCalls.removed.length} call(s) the client answered with "unsupported call": ${rejectedCalls.removed
+            .map((entry) => entry.name)
+            .join(", ")}`,
+        )
+      }
+    }
 
     if (
       route.provider !== "deepseek"

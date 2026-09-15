@@ -119,6 +119,72 @@ describe("DeepSeek forwarding", () => {
       }
     },
   )
+
+  test("drops a call the client answered with unsupported call before forwarding", async () => {
+    const previousConfig = state.runtimeConfig
+    state.runtimeConfig = {
+      environment: "test",
+      providers: {
+        ...defaultProviderConfig().providers,
+        copilot: { enabled: true, stripReasoningContentForGpt: true },
+        deepseek: {
+          enabled: true,
+          baseUrl: "https://api.deepseek.com",
+          apiKey: "test-deepseek-key",
+          models: ["deepseek-flash"],
+        },
+      },
+    }
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json({ object: "response" })),
+    )
+    const input = [
+      {
+        type: "function_call",
+        id: "9ebb480d-06e9-457e-af25-62082aa1c8f5",
+        name: "mcp__kanban_execution::kanban_update",
+        arguments: "{}",
+        call_id: "call_rejected",
+      },
+      {
+        type: "function_call_output",
+        id: "fco_rejected",
+        call_id: "call_rejected",
+        output: "unsupported call: mcp__kanban_execution::kanban_update",
+      },
+      {
+        type: "function_call",
+        id: "bffe5ec6-ab43-4397-90c9-cf66919ba650",
+        name: "kanban_update",
+        namespace: "mcp__kanban_execution",
+        arguments: "{}",
+        call_id: "call_retry",
+      },
+      {
+        type: "function_call_output",
+        id: "fco_retry",
+        call_id: "call_retry",
+        output: 'Wall time: 4s\nOutput:\n{"result":"ok"}',
+      },
+    ]
+    try {
+      const response = await post(
+        "/v1/responses",
+        JSON.stringify({ model: "deepseek-flash", input }),
+      )
+
+      expect(response.status).toBe(200)
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+      expect(url).toBe("https://api.deepseek.com/responses")
+      const forwarded = JSON.parse(await new Response(init.body).text()) as {
+        input: Array<Record<string, unknown>>
+      }
+      expect(forwarded.input).toEqual([input[2], input[3]])
+    } finally {
+      // eslint-disable-next-line require-atomic-updates
+      state.runtimeConfig = previousConfig
+    }
+  })
 })
 
 describe("Responses header forwarding", () => {
@@ -622,6 +688,70 @@ describe("Antigravity route forwarding", () => {
       expect(capturedBody.project).toBe("test-proj")
       const text = await res.text()
       expect(text).toContain("antigravity response")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("does not convert the call the client answered with unsupported call", async () => {
+    state.runtimeConfig = {
+      environment: "test",
+      providers: {
+        codex: { authProfile: "default", baseUrl: "https://chatgpt.com/backend-api/codex", enabled: false, models: [], transport: "http" },
+        copilot: { enabled: true, stripReasoningContentForGpt: true },
+        deepseek: { enabled: false, baseUrl: "https://api.deepseek.com", apiKey: "", models: [] },
+        antigravity: { enabled: true },
+      },
+    }
+    state.antigravityCredentialStore = {
+      current: async () => ({
+        access_token: "test-token",
+        project_id: "test-proj",
+        type: "antigravity",
+      }),
+    } as any
+
+    const originalFetch = globalThis.fetch
+    let capturedBody: any = null
+    globalThis.fetch = (async (_url: string, init: any) => {
+      capturedBody = JSON.parse(init.body)
+      return new Response(
+        "data: " + JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }] }) + "\n\n",
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      )
+    }) as any
+
+    const input = [
+      {
+        type: "function_call",
+        id: "fc_rejected",
+        name: "mcp__kanban_execution::kanban_update",
+        arguments: "{}",
+        call_id: "call_rejected",
+      },
+      {
+        type: "function_call_output",
+        id: "fco_rejected",
+        call_id: "call_rejected",
+        output: "unsupported call: mcp__kanban_execution::kanban_update",
+      },
+    ]
+
+    try {
+      const res = await server.request("/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "gemini-3.8-flash-tiered",
+          stream: true,
+          input,
+        }),
+      })
+
+      expect(res.status).toBe(200)
+      expect(JSON.stringify(capturedBody)).not.toContain(
+        "mcp__kanban_execution::kanban_update",
+      )
     } finally {
       globalThis.fetch = originalFetch
     }
