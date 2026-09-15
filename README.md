@@ -57,6 +57,12 @@ To install dependencies, run:
 bun install
 ```
 
+## Codex request forwarding
+
+For Copilot requests to `/responses` and `/v1/responses`, the proxy forwards client and upstream response headers by default, including session IDs, turn state, tracing, and provider-specific extension headers. Session state remains scoped to the request; the proxy does not create or store a shared conversation. Client `x-request-id` values are preserved, with a new ID generated when absent.
+
+The proxy supplies Copilot authentication and identity headers, excludes local cookies and connection-specific headers (including headers named by `Connection`), and lets the HTTP transport determine the host and body length. Upstream `Set-Cookie` is not relayed to the local origin, and response compression/length headers are removed because fetching and streaming can transform the body. DeepSeek retains its separate header policy.
+
 ## Codex model catalog
 
 On startup, copilot-api can fetch the [upstream Codex model catalog](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json), merge configured custom files and enabled DeepSeek metadata, and atomically write the configured output. Copy `config.example.json`, then select it with `--config` or `COPILOT_API_CONFIG`; paths inside the file are resolved relative to that file.

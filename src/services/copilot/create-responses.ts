@@ -1,16 +1,27 @@
 import consola from "consola"
 
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import { forwardHeaders } from "~/lib/proxy-headers"
 import { state } from "~/lib/state"
 
 export const createResponses = async (
   body: RequestInit["body"],
   signal?: AbortSignal,
+  requestHeaders?: Headers,
 ): Promise<Response> => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
   const url = `${copilotBaseUrl(state)}/responses`
   const startedAt = Date.now()
+  const headers = forwardHeaders(requestHeaders ?? new Headers(), [
+    "authorization",
+    "cookie",
+    "host",
+  ])
+  for (const [name, value] of Object.entries(copilotHeaders(state))) {
+    if (name === "x-request-id" && headers.has(name)) continue
+    headers.set(name, value)
+  }
 
   consola.debug("Sending native Responses request to Copilot", {
     url,
@@ -22,7 +33,7 @@ export const createResponses = async (
   try {
     const response = await fetch(url, {
       method: "POST",
-      headers: copilotHeaders(state),
+      headers,
       body,
       signal,
     })

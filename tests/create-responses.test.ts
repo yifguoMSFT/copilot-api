@@ -51,13 +51,13 @@ describe("createResponses", () => {
     await createResponses(body, controller.signal)
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    const headers = init.headers as Record<string, string>
+    const headers = new Headers(init.headers)
     expect(init.body).toBe(body)
     expect(init.signal).toBe(controller.signal)
-    expect(headers.Authorization).toBe("Bearer current-copilot-token")
-    expect(headers["copilot-integration-id"]).toBe("vscode-chat")
-    expect(headers["editor-version"]).toBe("vscode/1.0.0")
-    expect(headers["content-type"]).toBe("application/json")
+    expect(headers.get("authorization")).toBe("Bearer current-copilot-token")
+    expect(headers.get("copilot-integration-id")).toBe("vscode-chat")
+    expect(headers.get("editor-version")).toBe("vscode/1.0.0")
+    expect(headers.get("content-type")).toBe("application/json")
   })
 
   test("returns JSON, SSE, and upstream errors without parsing", async () => {

@@ -5,6 +5,7 @@ import consola from "consola"
 import { awaitApproval } from "~/lib/approval"
 import { isModelAlias, resolveModelAlias } from "~/lib/model-aliases"
 import { resolveModelRoute } from "~/lib/model-routing"
+import { forwardHeaders } from "~/lib/proxy-headers"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { createResponses } from "~/services/copilot/create-responses"
@@ -78,17 +79,27 @@ export async function handleResponse(c: Context): Promise<Response> {
       upstreamSignal,
     )
   } else {
-    upstream = await createResponses(upstreamBody, upstreamSignal)
+    upstream = await createResponses(
+      upstreamBody,
+      upstreamSignal,
+      c.req.raw.headers,
+    )
   }
   consola.info(
     `Response received from ${modelLabel}: ${upstream.status} in ${Date.now() - startedAt}ms`,
   )
   if (shouldLogContent) logResponseOutput(requestedModel, upstream.clone())
-  const headers = new Headers()
+  // Fetch decodes compressed bodies; streaming normalization can change their size.
+  const headers =
+    provider === "copilot" ?
+      forwardHeaders(upstream.headers, ["content-encoding", "set-cookie"])
+    : new Headers()
 
-  for (const name of forwardedResponseHeaders) {
-    const value = upstream.headers.get(name)
-    if (value !== null) headers.set(name, value)
+  if (provider !== "copilot") {
+    for (const name of forwardedResponseHeaders) {
+      const value = upstream.headers.get(name)
+      if (value !== null) headers.set(name, value)
+    }
   }
 
   consola.debug("Responses upstream response ready", {
