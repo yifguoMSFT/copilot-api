@@ -86,6 +86,28 @@ test("preserves upstream models and metadata, with custom slugs taking precedenc
   expect(warnMock).not.toHaveBeenCalled()
 })
 
+test("skips missing configured custom catalogs and loads existing ones", async () => {
+  fetchMock.mockResolvedValue(Response.json({ models: [{ slug: "astra" }] }))
+
+  await refreshCodexModels({
+    outputFile: path.join(directory, "codex-models.json"),
+    customFiles: [
+      path.join(directory, "missing-before.json"),
+      path.join(directory, "codex-models-custom.json"),
+      path.join(directory, "missing-after.json"),
+    ],
+  })
+
+  const output = await fs.readFile(path.join(directory, "codex-models.json"))
+  expect(JSON.parse(output.toString("utf8"))).toEqual({
+    models: [
+      { slug: "astra" },
+      { slug: "sol-fast", model_messages: { instructions_template: "custom" } },
+    ],
+  })
+  expect(warnMock).not.toHaveBeenCalled()
+})
+
 test.each([
   "network error",
   "timeout",

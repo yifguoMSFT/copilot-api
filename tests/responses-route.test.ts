@@ -46,7 +46,7 @@ afterAll(() => {
 const post = (
   path: string,
   body = '{"model":"gpt-copilot"}',
-  signal?: AbortSignal,
+  options: { signal?: AbortSignal; headers?: Record<string, string> } = {},
 ) =>
   server.request(
     new Request(`http://localhost${path}`, {
@@ -54,9 +54,10 @@ const post = (
       headers: {
         authorization: "Bearer local-dummy-token",
         "content-type": "application/json",
+        ...options.headers,
       },
       body,
-      signal,
+      signal: options.signal,
     }),
   )
 
@@ -120,6 +121,139 @@ describe("DeepSeek forwarding", () => {
   )
 })
 
+describe("Responses header forwarding", () => {
+  test.each(["/responses", "/v1/responses"])(
+    "forwards Codex session headers through %s without replacing Copilot credentials",
+    async (path) => {
+      const sessionHeaders = {
+        session_id: "session-a",
+        conversation_id: "conversation-a",
+        "X-Codex-Turn-State": "opaque-turn-state",
+        "x-codex-turn-metadata": '{"turn_id":"turn-a"}',
+        "x-client-request-id": "client-request-a",
+      }
+      const response = await post(path, '{"model":"gpt-copilot"}', {
+        headers: {
+          ...sessionHeaders,
+          "copilot-integration-id": "untrusted-client",
+          "x-request-id": "client-request-override",
+          cookie: "local-secret=value",
+          "x-private-header": "local-only",
+          accept: "text/event-stream",
+          "openai-beta": "future-feature=v1",
+          connection: "keep-alive, x-connection-only",
+          "x-connection-only": "transport-only",
+          "proxy-authorization": "Basic local-proxy-secret",
+          host: "local-proxy.example",
+        },
+      })
+
+      expect(response.status).toBe(200)
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+      const headers = new Headers(init.headers)
+      for (const [name, value] of Object.entries(sessionHeaders)) {
+        expect(headers.get(name)).toBe(value)
+      }
+      expect(headers.get("authorization")).toBe("Bearer test-copilot-token")
+      expect(headers.get("copilot-integration-id")).toBe("vscode-chat")
+      expect(headers.get("x-request-id")).toBe("client-request-override")
+      expect(headers.get("cookie")).toBeNull()
+      expect(headers.get("x-private-header")).toBe("local-only")
+      expect(headers.get("accept")).toBe("text/event-stream")
+      expect(headers.get("openai-beta")).toBe("future-feature=v1")
+      expect(headers.get("connection")).toBeNull()
+      expect(headers.get("x-connection-only")).toBeNull()
+      expect(headers.get("proxy-authorization")).toBeNull()
+      expect(headers.get("host")).toBeNull()
+      expect(headers.get("content-length")).toBeNull()
+    },
+  )
+
+  test("keeps session headers scoped to each request", async () => {
+    for (const session of ["session-a", "session-a", "session-b", undefined]) {
+      await post("/v1/responses", '{"model":"gpt-copilot"}', {
+        headers:
+          session === undefined ?
+            {}
+          : {
+              session_id: session,
+              "x-codex-turn-state": `state-${session}`,
+            },
+      })
+    }
+
+    const headers = fetchMock.mock.calls.map(
+      ([, init]) => new Headers(init?.headers),
+    )
+    expect(headers.map((entry) => entry.get("session_id"))).toEqual([
+      "session-a",
+      "session-a",
+      "session-b",
+      null,
+    ])
+    expect(headers.map((entry) => entry.get("x-codex-turn-state"))).toEqual([
+      "state-session-a",
+      "state-session-a",
+      "state-session-b",
+      null,
+    ])
+    expect(
+      new Set(headers.map((entry) => entry.get("x-request-id"))).size,
+    ).toBe(4)
+  })
+
+  test.each([false, true])(
+    "returns upstream session headers with stream=%s",
+    async (stream) => {
+      const body =
+        stream ? 'data: {"type":"response.completed"}\n\n' : '{"id":"resp-a"}'
+      const sessionHeaders = {
+        session_id: "upstream-session",
+        conversation_id: "upstream-conversation",
+        "x-codex-turn-state": "next-turn-state",
+      }
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve(
+          new Response(body, {
+            headers: {
+              ...sessionHeaders,
+              "content-type": stream ? "text/event-stream" : "application/json",
+              "set-cookie": "upstream-secret=value",
+              "content-encoding": "gzip",
+              "content-length": "999",
+              connection: "keep-alive, x-transport-only, x-request-id",
+              "x-transport-only": "remove-me",
+              "x-request-id": "connection-local-id",
+              "x-future-provider-state": "opaque-provider-state",
+              "retry-after": "10",
+            },
+          }),
+        ),
+      )
+
+      const response = await post(
+        "/v1/responses",
+        JSON.stringify({ model: "gpt-copilot", stream }),
+      )
+
+      expect(await response.text()).toBe(body)
+      for (const [name, value] of Object.entries(sessionHeaders)) {
+        expect(response.headers.get(name)).toBe(value)
+      }
+      expect(response.headers.get("set-cookie")).toBeNull()
+      expect(response.headers.get("content-encoding")).toBeNull()
+      expect(response.headers.get("content-length")).toBeNull()
+      expect(response.headers.get("connection")).toBeNull()
+      expect(response.headers.get("x-transport-only")).toBeNull()
+      expect(response.headers.get("x-request-id")).toBeNull()
+      expect(response.headers.get("x-future-provider-state")).toBe(
+        "opaque-provider-state",
+      )
+      expect(response.headers.get("retry-after")).toBe("10")
+    },
+  )
+})
+
 describe("Responses routes", () => {
   test.each(["/responses", "/v1/responses"])(
     "registers %s and preserves request bytes",
@@ -131,7 +265,7 @@ describe("Responses routes", () => {
       expect(response.status).toBe(200)
       const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
       expect(await new Response(init.body).text()).toBe(body)
-      expect((init.headers as Record<string, string>).Authorization).toBe(
+      expect(new Headers(init.headers).get("authorization")).toBe(
         "Bearer test-copilot-token",
       )
     },
@@ -207,7 +341,7 @@ describe("Responses routes", () => {
     expect(response.headers.get("openai-processing-ms")).toBe("12")
     expect(response.headers.get("x-request-id")).toBe("request-1")
     expect(response.headers.get("content-length")).toBeNull()
-    expect(response.headers.get("x-private-header")).toBeNull()
+    expect(response.headers.get("x-private-header")).toBe("hidden")
   })
 
   test("streams upstream SSE framing without parsing", async () => {
@@ -327,7 +461,9 @@ describe("Responses routes", () => {
   test("propagates request cancellation to upstream fetch", async () => {
     const controller = new AbortController()
 
-    await post("/v1/responses", '{"model":"gpt-copilot"}', controller.signal)
+    await post("/v1/responses", '{"model":"gpt-copilot"}', {
+      signal: controller.signal,
+    })
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(init.signal).toBe(controller.signal)
@@ -337,7 +473,9 @@ describe("Responses routes", () => {
     const controller = new AbortController()
     controller.abort()
 
-    await post("/v1/responses", '{"model":"gpt-copilot"}', controller.signal)
+    await post("/v1/responses", '{"model":"gpt-copilot"}', {
+      signal: controller.signal,
+    })
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(init.signal).toBeUndefined()

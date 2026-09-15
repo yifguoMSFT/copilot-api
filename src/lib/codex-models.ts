@@ -421,7 +421,7 @@ export async function refreshCodexModels(
       const customText = await fs
         .readFile(customPath)
         .catch((error: unknown) => {
-          if (legacy && (error as NodeJS.ErrnoException).code === "ENOENT")
+          if ((error as NodeJS.ErrnoException).code === "ENOENT")
             return undefined
           throw error
         })
