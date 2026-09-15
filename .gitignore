@@ -19,3 +19,5 @@ worktrees
 /config.json
 /reference
 /codex-models.json
+.gocache
+.tmp-codex
