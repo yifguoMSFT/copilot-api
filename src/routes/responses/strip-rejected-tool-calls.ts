@@ -4,10 +4,13 @@
  * that answer stay in the replayed history; a later strict upstream (Codex/Copilot) rejects the
  * whole request because the name is not a legal tool name.
  *
- * This drops such a pair from the forwarded copy of the history. Only an exact rejection string
- * paired through one unique `call_id` is removed; anything ambiguous is kept.
+ * This drops such a pair from the forwarded copy of the history only when the call name is not a
+ * legal Responses tool name. A legal name's rejection is useful model feedback and must remain in
+ * the replayed history. Only an exact rejection string paired through one unique `call_id` is
+ * removed; anything ambiguous is kept.
  */
 const REJECTION_PREFIX = "unsupported call: "
+const LEGAL_TOOL_NAME = /^[\w-]+$/
 
 const CALL_OUTPUT_TYPES: Record<string, string> = {
   custom_tool_call: "custom_tool_call_output",
@@ -113,6 +116,7 @@ const isRejectedPair = (
   output: OutputCandidate | undefined,
 ): output is OutputCandidate =>
   !call.ambiguous
+  && !LEGAL_TOOL_NAME.test(call.name)
   && output !== undefined
   && !output.ambiguous
   && output.type === call.outputType

@@ -41,17 +41,18 @@ describe("stripRejectedToolCalls", () => {
     expect(result.input).toEqual([input[0], input[3], input[4]])
   })
 
-  test("drops a call the client rejected even when its name is legal", () => {
+  test("keeps a legal call the client rejected", () => {
     const input = [
       call("mcp__codex_app__open_in_codex", "c1"),
       output("c1", "unsupported call: mcp__codex_app__open_in_codex"),
     ]
 
-    expect(stripRejectedToolCalls(input).changed).toBe(true)
-    expect(stripRejectedToolCalls(input).input).toEqual([])
+    const result = stripRejectedToolCalls(input)
+    expect(result.changed).toBe(false)
+    expect(result.input).toBe(input)
   })
 
-  test("drops a custom tool call rejected through a custom_tool_call_output", () => {
+  test("keeps a legal custom tool call rejected through a custom_tool_call_output", () => {
     const input = [
       {
         type: "custom_tool_call",
@@ -69,8 +70,8 @@ describe("stripRejectedToolCalls", () => {
     ]
 
     const result = stripRejectedToolCalls(input)
-    expect(result.changed).toBe(true)
-    expect(result.input).toEqual([])
+    expect(result.changed).toBe(false)
+    expect(result.input).toBe(input)
   })
 
   test("keeps a rejected-looking output that is not an exact rejection string", () => {
@@ -164,12 +165,12 @@ describe("stripRejectedToolCalls", () => {
 
   test("removes only the rejected pair among parallel calls", () => {
     const input = [
-      call("get_weather", "c1"),
+      call("mcp__weather::get_weather", "c1"),
       call("exec_command", "c2"),
-      output("c1", "unsupported call: get_weather"),
+      output("c1", "unsupported call: mcp__weather::get_weather"),
       output("c2", '{"temperature":27}'),
-      call("get_time", "c3"),
-      output("c3", "unsupported call: get_time"),
+      call("mcp__time::get_time", "c3"),
+      output("c3", "unsupported call: mcp__time::get_time"),
     ]
 
     const result = stripRejectedToolCalls(input)
@@ -179,27 +180,28 @@ describe("stripRejectedToolCalls", () => {
 
   test("accepts the namespaced rejection forms a flat name cannot express", () => {
     const namespaced = [
-      call("kanban_update", "c1", { namespace: "mcp__kanban_execution" }),
+      call("mcp__kanban_execution::kanban_update", "c1"),
       output("c1", "unsupported call: mcp__kanban_execution::kanban_update"),
     ]
     const flattened = [
-      call("kanban_focus", "c2", { namespace: "mcp__kanban_execution" }),
+      call("mcp__kanban_execution__kanban_focus", "c2"),
       output("c2", "unsupported call: mcp__kanban_execution__kanban_focus"),
     ]
     const mismatchedNamespace = [
-      call("kanban_update", "c3", { namespace: "mcp__kanban_execution" }),
+      call("mcp__kanban_execution::kanban_update", "c3"),
       output("c3", "unsupported call: mcp__kanban_planning::kanban_update"),
     ]
 
     expect(stripRejectedToolCalls(namespaced).changed).toBe(true)
-    expect(stripRejectedToolCalls(flattened).changed).toBe(true)
+    // The flattened form is a legal Responses name and must therefore remain.
+    expect(stripRejectedToolCalls(flattened).changed).toBe(false)
     expect(stripRejectedToolCalls(mismatchedNamespace).changed).toBe(false)
   })
 
   test("leaves the input array and its items untouched", () => {
     const input = [
-      call("exec_command", "c1"),
-      output("c1", "unsupported call: exec_command"),
+      call("mcp__shell::exec_command", "c1"),
+      output("c1", "unsupported call: mcp__shell::exec_command"),
     ]
     const snapshot = structuredClone(input)
 

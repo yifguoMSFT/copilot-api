@@ -59,6 +59,31 @@ test("forwards session-id header when provided", async () => {
   }
 })
 
+test("forwards x-opencode-session header when provided", async () => {
+  const fetchMock = spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({ ok: true }),
+  )
+  try {
+    const headers = new Headers({ "x-opencode-session": "opencode-session-1" })
+    await createDeepSeekResponses(
+      "{}",
+      {
+        enabled: true,
+        baseUrl: "https://opencode.ai/zen/go/v1/responses",
+        apiKey: "test-key",
+        models: ["deepseek-v4.1-flash"],
+      },
+      { headers },
+    )
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>)["x-opencode-session"]).toBe(
+      "opencode-session-1",
+    )
+  } finally {
+    fetchMock.mockRestore()
+  }
+})
+
 test("requires the configured API key", () => {
   expect(
     createDeepSeekResponses("{}", {

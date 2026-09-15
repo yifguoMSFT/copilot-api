@@ -5,6 +5,15 @@ export interface CreateDeepSeekResponsesOptions {
   headers?: Headers
 }
 
+const copyHeader = (
+  source: Headers | undefined,
+  name: string,
+  target: Record<string, string>,
+): void => {
+  const value = source?.get(name)
+  if (value) target[name] = value
+}
+
 export async function createDeepSeekResponses(
   body: RequestInit["body"],
   config: RuntimeConfig["providers"]["deepseek"],
@@ -43,9 +52,8 @@ export async function createDeepSeekResponses(
 
   const sessionId =
     options.headers?.get("session-id") ?? options.headers?.get("x-session-id")
-  if (sessionId) {
-    requestHeaders["session-id"] = sessionId
-  }
+  if (sessionId) requestHeaders["session-id"] = sessionId
+  copyHeader(options.headers, "x-opencode-session", requestHeaders)
 
   return await fetch(url, {
     method: "POST",
