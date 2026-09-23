@@ -56,7 +56,7 @@ requires_openai_auth = false
 
 Existing model selection and unrelated settings are preserved. Before changing an existing config, the installer saves an exact timestamped backup beside it as `config.toml.*.bak`. TOML formatting is rewritten and comments are removed. Invalid existing TOML is left untouched and reported as an error.
 
-By default, the proxy refreshes the model catalog from OpenAI's Codex catalog on startup and writes it to `codex-models.json` in the repository folder (`dist\..`), regardless of the directory you start it from. Restart Codex to load a refreshed catalog.
+By default, the proxy refreshes the model catalog from OpenAI's Codex catalog on startup and writes `codex-models.json` next to `codex-models-custom.json` in its working directory. The Windows installer generates the catalog in the repository folder instead and points `model_catalog_json` at it. Restart Codex to load a refreshed catalog.
 
 ## Project Overview
 
