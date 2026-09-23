@@ -15,9 +15,17 @@ dist/
 .kanban-acceptance
 worktrees
 *kanban*
+.gocache
+.tmp-codex
+*.kanban.*
+kanban-archive
+
+# Local-only configuration, catalogs, and historical project notes
+/.kanbansession
+/.kanbansession.log
+/package-lock.json
 /codex-models-custom.json
 /config.json
 /reference
 /codex-models.json
-.gocache
-.tmp-codex
+/codex-models-upstream.json
