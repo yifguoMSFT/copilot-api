@@ -3,6 +3,7 @@
 import { defineCommand } from "citty"
 import clipboard from "clipboardy"
 import consola from "consola"
+import { realpathSync } from "node:fs"
 import path from "node:path"
 import { serve } from "srvx"
 import invariant from "tiny-invariant"
@@ -125,10 +126,22 @@ interface CodexCatalogPaths {
   customFiles: Array<string>
 }
 
-const codexCatalogPaths = (cwd: string): CodexCatalogPaths => ({
-  cacheFile: path.join(cwd, "codex-models-upstream.json"),
-  catalogFile: path.join(cwd, "codex-models.json"),
-  customFiles: [path.join(cwd, "codex-models-custom.json")],
+/**
+ * The package directory: the parent of the folder holding the running entry
+ * file, so both `dist/main.js` and `src/main.ts` resolve to the repository
+ * root. Symlinks resolve to the real entry file, which keeps the catalog in
+ * the checkout regardless of the directory the command is launched from.
+ */
+const projectDirectory = (): string =>
+  path.resolve(
+    path.dirname(realpathSync(process.argv[1] ?? process.execPath)),
+    "..",
+  )
+
+const codexCatalogPaths = (directory: string): CodexCatalogPaths => ({
+  cacheFile: path.join(directory, "codex-models-upstream.json"),
+  catalogFile: path.join(directory, "codex-models.json"),
+  customFiles: [path.join(directory, "codex-models-custom.json")],
 })
 
 /**
@@ -244,7 +257,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.runtimeConfig = runtimeConfig
   // Static conflicts fail before any directory or network work happens.
   assertModelRoutingConflicts(runtimeConfig)
-  const catalogPaths = codexCatalogPaths(process.cwd())
+  const catalogPaths = codexCatalogPaths(projectDirectory())
   const baseCatalog = await loadCodexBaseCatalog(runtimeConfig, catalogPaths)
   if (
     runtimeConfig.providers.deepseek.enabled

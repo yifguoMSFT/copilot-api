@@ -56,7 +56,7 @@ requires_openai_auth = false
 
 Existing model selection and unrelated settings are preserved. Before changing an existing config, the installer saves an exact timestamped backup beside it as `config.toml.*.bak`. TOML formatting is rewritten and comments are removed. Invalid existing TOML is left untouched and reported as an error.
 
-By default, the proxy refreshes the model catalog from OpenAI's Codex catalog on startup and writes `codex-models.json` next to `codex-models-custom.json` in its working directory. The Windows installer generates the catalog in the repository folder instead and points `model_catalog_json` at it. Restart Codex to load a refreshed catalog.
+By default, the proxy refreshes the model catalog from OpenAI's Codex catalog on startup and writes `codex-models.json` into the copilot-api folder, beside `codex-models-custom.json`. The installer points `model_catalog_json` at that same file. The launch directory does not change the destination. Restart Codex to load a refreshed catalog.
 
 ## Project Overview
 
@@ -98,7 +98,7 @@ The proxy supplies Copilot authentication and identity headers, excludes local c
 
 ## Codex model catalog
 
-On startup, copilot-api fetches the [upstream Codex model catalog](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json), merges `codex-models-custom.json` from its working directory, and atomically writes `codex-models.json` beside it. This catalog refresh is independent of `config.json`.
+On startup, copilot-api fetches the [upstream Codex model catalog](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json), merges `codex-models-custom.json` from the copilot-api folder, and atomically writes `codex-models.json` beside it. This catalog refresh is independent of `config.json`.
 
 The custom file uses the same `{ "models": [...] }` structure. Custom entries replace upstream entries with the same `slug`; other upstream entries and metadata are preserved. The included `gemini-3.8-flash` entry adapts the Codex instructions for Gemini 3.8 Flash and supports thinking levels `low`, `medium`, and `high` (not `minimal`). Its `context_window` stays at 272000, while `max_context_window` records the native input limit of 1048576. [Google's model reference](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash) specifies a 65536-token text output limit and text, image, video, audio, and PDF inputs. The catalog exposes text, image, and audio; video/PDF support and output limits are documented in the entry rather than represented by unsupported Codex schema fields. Actual attachment support depends on the client and provider. Its copied instructions remain local and should be refreshed when needed.
 
@@ -108,7 +108,7 @@ To use it, set a top-level entry in your Codex `config.toml`, adjusting the abso
 model_catalog_json = "/absolute/path/to/copilot-api/codex-models.json"
 ```
 
-Edit `codex-models-custom.json` in the copilot-api working directory to add custom models. Remote failures keep the existing output; replacement remains atomic.
+Edit `codex-models-custom.json` in the copilot-api folder to add custom models. Remote failures keep the existing output; replacement remains atomic.
 
 Codex consumes the generated snapshot through `model_catalog_json`, which replaces its default catalog. Restart Codex after a refresh to load it. Use `codex debug models` to verify the effective catalog. Catalog entries do not guarantee that the selected provider supports every listed model.
 
