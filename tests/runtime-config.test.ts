@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 
 import { loadRuntimeConfig } from "../src/lib/runtime-config"
 
@@ -71,8 +72,50 @@ test("rejects invalid boolean overrides", () => {
   ).rejects.toThrow("must be true or false")
 })
 
-test("uses a portable application data path by default", async () => {
-  const config = await loadRuntimeConfig({ env: {} })
-  expect(path.isAbsolute(config.catalog.outputFile)).toBe(true)
-  expect(config.catalog.outputFile).not.toContain("E:/workshop/copilot-api")
+test.each([false, true])(
+  "writes above the CLI directory from another cwd (linked: %s)",
+  async (linked) => {
+    const directory = path.dirname(await fixture({ version: 1 }))
+    const binaryDirectory = path.join(directory, "dist")
+    await fs.mkdir(binaryDirectory)
+    const entrypoint = path.join(binaryDirectory, "main.ts")
+    const configModule = pathToFileURL(
+      path.resolve(import.meta.dir, "../src/lib/runtime-config.ts"),
+    ).href
+    await fs.writeFile(
+      entrypoint,
+      `import { loadRuntimeConfig } from ${JSON.stringify(configModule)};
+console.log(JSON.stringify((await loadRuntimeConfig({ env: {} })).catalog));`,
+    )
+    const linkDirectory = path.join(directory, "linked-bin")
+    if (linked) await fs.symlink(binaryDirectory, linkDirectory, "junction")
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        linked ? path.join(linkDirectory, "main.ts") : entrypoint,
+      ],
+      { cwd: os.tmpdir(), stdout: "pipe", stderr: "pipe" },
+    )
+    const output = await new Response(child.stdout).text()
+    const errors = await new Response(child.stderr).text()
+    expect(await child.exited, errors).toBe(0)
+    expect(JSON.parse(output)).toEqual({
+      enabled: true,
+      customFiles: [],
+      outputFile: path.join(await fs.realpath(directory), "codex-models.json"),
+    })
+  },
+)
+
+test("explicit catalog output overrides the package directory", async () => {
+  const file = await fixture({
+    version: 1,
+    defaults: { catalog: { outputFile: "configured/models.json" } },
+  })
+  const outputFile = path.join(path.dirname(file), "override", "models.json")
+  const config = await loadRuntimeConfig({
+    configPath: file,
+    env: { COPILOT_API_CATALOG_OUTPUT_FILE: outputFile },
+  })
+  expect(config.catalog.outputFile).toBe(outputFile)
 })

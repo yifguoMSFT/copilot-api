@@ -102,7 +102,7 @@ See `config.example.json` and `src/lib/runtime-config.ts`.
 - File catalog paths resolve relative to that config file, not the process working directory.
 - At least one provider must be enabled.
 
-Built-in defaults enable Copilot and catalog refresh, disable DeepSeek, and use no custom catalog files. Catalog output defaults to `<home>/.local/share/copilot-api/codex-models.json`. DeepSeek defaults to `https://api.deepseek.com`, key variable `DEEPSEEK_API_KEY`, and model names `deepseek-flash` and `deepseek-v4-pro`.
+Built-in defaults enable Copilot and catalog refresh, disable DeepSeek, and use no custom catalog files. Catalog output defaults to `codex-models.json` in the package root, one directory above the resolved CLI entry file's folder (`dist/..` for built/linked execution and `src/..` for source execution). Symlinks resolve to the real entry file; the launch working directory does not determine the destination. The catalog stays outside build output and survives rebuilds. Explicit config/environment output overrides still take precedence. This replaces the previous application-data default; GitHub credential storage remains under `<home>/.local/share/copilot-api`. DeepSeek defaults to `https://api.deepseek.com`, key variable `DEEPSEEK_API_KEY`, and model names `deepseek-flash` and `deepseek-v4-pro`.
 
 Supported runtime overrides:
 

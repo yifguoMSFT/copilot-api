@@ -1,8 +1,7 @@
+import { realpathSync } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
 import { z } from "zod"
-
-import { PATHS } from "./paths"
 
 const providerSchema = z.strictObject({ enabled: z.boolean().optional() })
 const deepSeekSchema = z.strictObject({
@@ -66,7 +65,11 @@ const defaults = (): Omit<RuntimeConfig, "environment" | "source"> => ({
   catalog: {
     enabled: true,
     customFiles: [],
-    outputFile: path.join(PATHS.APP_DIR, "codex-models.json"),
+    outputFile: path.join(
+      path.dirname(realpathSync(process.argv[1] ?? process.execPath)),
+      "..",
+      "codex-models.json",
+    ),
   },
 })
 
