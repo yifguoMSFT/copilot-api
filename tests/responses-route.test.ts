@@ -4,6 +4,36 @@ import consola from "consola"
 import { defaultProviderConfig } from "../src/lib/runtime-config"
 import { state } from "../src/lib/state"
 import { server } from "../src/server"
+import automationUpdateNamespace from "./fixtures/deepseek-schema/automation-update.tools.json"
+
+interface FunctionTool {
+  name: string
+  parameters: Record<string, unknown>
+  type: string
+}
+
+interface NamespaceTool {
+  name: string
+  tools: Array<FunctionTool>
+  type: string
+}
+
+interface ForwardedDeepSeekBody {
+  input: Array<Record<string, unknown>>
+  model: string
+  tools: Array<NamespaceTool>
+}
+
+const automationUpdateTool =
+  automationUpdateNamespace as unknown as NamespaceTool
+
+const withDeclaredRoot = (namespace: NamespaceTool): NamespaceTool => ({
+  ...namespace,
+  tools: namespace.tools.map((tool) => ({
+    ...tool,
+    parameters: { ...tool.parameters, type: "object" },
+  })),
+})
 
 const originalFetch = globalThis.fetch
 const originalPrompt = consola.prompt.bind(consola)
@@ -119,6 +149,82 @@ describe("DeepSeek forwarding", () => {
       }
     },
   )
+
+  test("declares the object root for DeepSeek schemas that only imply it", async () => {
+    const previousConfig = state.runtimeConfig
+    state.runtimeConfig = {
+      environment: "test",
+      providers: {
+        ...defaultProviderConfig().providers,
+        copilot: { enabled: true, stripReasoningContentForGpt: true },
+        deepseek: {
+          enabled: true,
+          baseUrl: "https://api.deepseek.com",
+          apiKey: "test-deepseek-key",
+          models: ["deepseek-flash"],
+        },
+      },
+    }
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json({ object: "response" })),
+    )
+    const body = JSON.stringify({
+      model: "deepseek-flash",
+      tools: [structuredClone(automationUpdateTool)],
+      input: [
+        {
+          type: "tool_search_output",
+          call_id: "call_search",
+          execution: "client",
+          tools: [structuredClone(automationUpdateTool)],
+        },
+      ],
+    })
+    try {
+      const response = await post("/v1/responses", body)
+      expect(response.status).toBe(200)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+      const forwarded = JSON.parse(
+        await new Response(init.body).text(),
+      ) as unknown as ForwardedDeepSeekBody
+
+      const expected = withDeclaredRoot(automationUpdateTool)
+      expect(forwarded.model).toBe("deepseek-flash")
+      expect(forwarded.tools).toHaveLength(1)
+      expect(forwarded.tools[0]).toEqual(expected)
+      expect(forwarded.tools[0].tools[0].parameters.oneOf).toHaveLength(4)
+      expect(
+        Object.keys(forwarded.tools[0].tools[0].parameters.$defs as object),
+      ).toHaveLength(25)
+
+      expect(forwarded.input).toHaveLength(1)
+      expect(forwarded.input[0].call_id).toBe("call_search")
+      expect(forwarded.input[0].execution).toBe("client")
+      expect(forwarded.input[0].tools).toEqual([expected])
+
+      // The caller's request stays byte-identical to what the client sent.
+      expect(body).toBe(
+        JSON.stringify({
+          model: "deepseek-flash",
+          tools: [automationUpdateTool],
+          input: [
+            {
+              type: "tool_search_output",
+              call_id: "call_search",
+              execution: "client",
+              tools: [automationUpdateTool],
+            },
+          ],
+        }),
+      )
+    } finally {
+      // Tests run sequentially and restore their own runtime configuration.
+      // eslint-disable-next-line require-atomic-updates
+      state.runtimeConfig = previousConfig
+    }
+  })
 
   test("drops a call the client answered with unsupported call before forwarding", async () => {
     const previousConfig = state.runtimeConfig

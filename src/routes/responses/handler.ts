@@ -20,6 +20,7 @@ import { join } from "node:path"
 
 import { toCodexAuthErrorResponse } from "./codex-passthrough"
 import { stripReasoningContent } from "./gpt-reasoning-content"
+import { normalizeFunctionSchemaRoots } from "./normalize-function-schema-roots"
 import { sanitizeInputItemIds } from "./sanitize-input-ids"
 import { stripRejectedToolCalls } from "./strip-rejected-tool-calls"
 import { normalizeResponsesItemIds } from "./sse-item-id-normalizer"
@@ -306,6 +307,17 @@ const resolveResponseModel = (
         nextPayload = { ...nextPayload, input: sanitizedIds.input }
         changed = true
         consola.info(`Sanitized ${sanitizedIds.renamedCount} input item IDs to conform with Responses protocol`)
+      }
+    }
+
+    if (route.provider === "deepseek") {
+      const normalizedSchemas = normalizeFunctionSchemaRoots(nextPayload)
+      if (normalizedSchemas.changed) {
+        nextPayload = normalizedSchemas.payload
+        changed = true
+        consola.info(
+          `Declared object root on ${normalizedSchemas.normalizedCount} function schema(s) for DeepSeek`,
+        )
       }
     }
 
