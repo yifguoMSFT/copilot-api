@@ -12,3 +12,17 @@ node_modules/
 
 # build output
 dist/
+*.kanban.*
+kanban-archive
+
+# Local-only configuration, catalogs, and historical project notes
+/.kanbansession
+/.kanbansession.log
+/package-lock.json
+/codex-models.json
+/start.bat
+/DEEPSEEK_ROUTING_AND_ENV_CONFIG_DESIGN.md
+/docs/DEEPSEEK_ROUTING_AND_ENV_CONFIG_DESIGN.md
+/RESPONSES_API_IMPLEMENTATION_PLAN.md
+/RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_PLAN.md
+/RESPONSES_STREAM_COMPATIBILITY_EXPERIMENT_REPORT.md
