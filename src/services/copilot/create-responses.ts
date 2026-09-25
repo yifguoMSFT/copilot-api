@@ -2,17 +2,26 @@ import consola from "consola"
 
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { forwardHeaders } from "~/lib/proxy-headers"
+import { fetchWithRequestDump } from "~/lib/request-dump"
+import {
+  logResponsesDiagnostic,
+  logResponsesError,
+  summarizeResponsesBody,
+  summarizeResponsesHeaders,
+} from "~/lib/responses-diagnostics"
 import { state } from "~/lib/state"
 
+// eslint-disable-next-line complexity
 export const createResponses = async (
   body: RequestInit["body"],
   signal?: AbortSignal,
-  requestHeaders?: Headers,
+  options?: { requestHeaders?: Headers; originalBody?: ArrayBuffer },
 ): Promise<Response> => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
   const url = `${copilotBaseUrl(state)}/responses`
   const startedAt = Date.now()
+  const requestHeaders = options?.requestHeaders
   const headers = forwardHeaders(requestHeaders ?? new Headers(), [
     "authorization",
     "cookie",
@@ -23,6 +32,22 @@ export const createResponses = async (
     headers.set(name, value)
   }
 
+  const diagnostics = state.verbose
+  const requestId = headers.get("x-request-id")
+  if (diagnostics) {
+    void logResponsesDiagnostic({
+      stage: "request",
+      requestId,
+      url,
+      incoming: summarizeResponsesBody(options?.originalBody ?? body),
+      upstream: summarizeResponsesBody(body),
+      incomingHeaders: summarizeResponsesHeaders(
+        requestHeaders ?? new Headers(),
+      ),
+      upstreamHeaders: summarizeResponsesHeaders(headers),
+    })
+  }
+
   consola.debug("Sending native Responses request to Copilot", {
     url,
     accountType: state.accountType,
@@ -31,12 +56,31 @@ export const createResponses = async (
   })
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRequestDump(url, {
       method: "POST",
       headers,
       body,
       signal,
     })
+
+    if (diagnostics) {
+      void logResponsesDiagnostic({
+        stage: "upstream-response",
+        requestId,
+        upstreamRequestId: response.headers.get("x-request-id"),
+        copilotRequestId: response.headers.get("x-copilot-service-request-id"),
+        status: response.status,
+        elapsedMs: Date.now() - startedAt,
+        headers: summarizeResponsesHeaders(response.headers),
+      })
+      if (!response.ok) {
+        void logResponsesError(response, requestId).catch(() =>
+          consola.debug("Responses diagnostic error body unavailable", {
+            requestId,
+          }),
+        )
+      }
+    }
 
     consola.debug("Native Responses request completed", {
       status: response.status,

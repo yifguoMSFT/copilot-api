@@ -28,6 +28,7 @@ beforeEach(() => {
   state.copilotToken = "test-copilot-token"
   state.vsCodeVersion = "1.0.0"
   state.manualApprove = false
+  state.verbose = false
   state.rateLimitSeconds = undefined
   state.rateLimitWait = false
   state.responsesStableItemIds = true
@@ -59,6 +60,47 @@ const post = (
   )
 
 describe("Responses header forwarding", () => {
+  test("diagnostics preserve the request body and correlate both boundaries", async () => {
+    state.verbose = true
+    const body =
+      '{"model":"gpt-6-sol","input":[{"type":"function_call_output","output":[{"type":"encrypted_content","encrypted_content":"private-ciphertext"}]}]}'
+    try {
+      await post("/v1/responses", body, {
+        headers: {
+          "x-request-id": "diagnostic-request",
+          session_id: "private-session",
+        },
+      })
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+      expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe(body)
+      const diagnosticCalls = infoMock.mock.calls as unknown as Array<
+        [string, string]
+      >
+      const records = diagnosticCalls
+        .filter(([label]) => label === "Responses diagnostic")
+        .map(([, value]) => JSON.parse(value) as Record<string, unknown>)
+      const request = records.find((entry) => entry.stage === "request")
+      if (request === undefined) throw new Error("Missing request diagnostic")
+      expect(request.requestId).toBe("diagnostic-request")
+      expect(request.incoming).toEqual(request.upstream)
+      expect(
+        records.find((entry) => entry.stage === "upstream-response")?.requestId,
+      ).toBe("diagnostic-request")
+      expect(JSON.stringify(records)).not.toContain("private-ciphertext")
+      expect(JSON.stringify(records)).not.toContain("private-session")
+    } finally {
+      state.verbose = false
+    }
+  })
+
+  test("omits request diagnostics without verbose logging", async () => {
+    await post("/v1/responses")
+    const diagnosticCalls = infoMock.mock.calls as unknown as Array<[string]>
+    expect(
+      diagnosticCalls.some(([label]) => label === "Responses diagnostic"),
+    ).toBe(false)
+  })
+
   test.each(["/responses", "/v1/responses"])(
     "forwards Codex session headers through %s without replacing Copilot credentials",
     async (path) => {
@@ -214,7 +256,7 @@ describe("Responses routes", () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(await new Response(init.body).json()).toEqual({
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       input: "review this",
     })
     expect(infoMock).toHaveBeenCalledWith(
@@ -226,11 +268,11 @@ describe("Responses routes", () => {
       '{"object":"response"}',
     )
     expect(infoMock).toHaveBeenCalledWith(
-      "Request sent to codex-auto-review (gpt-5.6-luna)",
+      "Request sent to codex-auto-review (gpt-6-luna)",
     )
     expect(infoMock).toHaveBeenCalledWith(
       expect.stringMatching(
-        /^Response received from codex-auto-review \(gpt-5\.6-luna\): 200 in \d+ms$/,
+        /^Response received from codex-auto-review \(gpt-6-luna\): 200 in \d+ms$/,
       ),
     )
   })
@@ -317,7 +359,7 @@ describe("Responses routes", () => {
 
   test("logs aliased streaming output without changing SSE framing", async () => {
     const event =
-      'event: response.output_text.delta\ndata: {"delta":"allow","obfuscation":"noise"}\n\nevent: response.completed\ndata: {"copilot_usage":{"total_nano_aiu":42},"response":{"model":"gpt-5.6-luna","status":"completed","instructions":"large policy","output":[{"encrypted_content":"secret","content":[{"text":"{\\"risk_level\\":\\"low\\",\\"outcome\\":\\"allow\\"}"}]}],"usage":{"input_tokens":100,"output_tokens":10}},"type":"response.completed"}\n\n'
+      'event: response.output_text.delta\ndata: {"delta":"allow","obfuscation":"noise"}\n\nevent: response.completed\ndata: {"copilot_usage":{"total_nano_aiu":42},"response":{"model":"gpt-6-luna","status":"completed","instructions":"large policy","output":[{"encrypted_content":"secret","content":[{"text":"{\\"risk_level\\":\\"low\\",\\"outcome\\":\\"allow\\"}"}]}],"usage":{"input_tokens":100,"output_tokens":10}},"type":"response.completed"}\n\n'
     fetchMock.mockImplementationOnce(() =>
       Promise.resolve(
         new Response(event, {
@@ -334,7 +376,7 @@ describe("Responses routes", () => {
     expect(await response.text()).toBe(event)
     expect(infoMock).toHaveBeenCalledWith(
       "codex-auto-review output:",
-      '{"model":"gpt-5.6-luna","status":"completed","output":{"risk_level":"low","outcome":"allow"},"usage":{"input_tokens":100,"output_tokens":10},"copilot_usage":{"total_nano_aiu":42}}',
+      '{"model":"gpt-6-luna","status":"completed","output":{"risk_level":"low","outcome":"allow"},"usage":{"input_tokens":100,"output_tokens":10},"copilot_usage":{"total_nano_aiu":42}}',
     )
   })
 

@@ -37,6 +37,8 @@ The proxy reuses the GitHub credentials saved during installation. Keep the term
 
 The installer does not start a background service. Run `copilot-api start` whenever you need the proxy; press `Ctrl+C` to stop it.
 
+For queryable request capture, start with `copilot-api start --dump-requests`. This appends complete incoming and upstream API request bodies and credential-redacted headers to `logs/requests.sqlite` in the working directory. See [request dump queries and capture scope](docs/troubleshoot/request-dumps.md). This flag works independently of `--verbose`.
+
 ## Codex configuration
 
 The installer uses `%USERPROFILE%\.codex\config.toml`, or `%CODEX_HOME%\config.toml` when `CODEX_HOME` is set. It creates both the folder and file if they do not exist.

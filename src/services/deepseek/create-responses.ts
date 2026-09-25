@@ -1,5 +1,7 @@
 import type { RuntimeConfig } from "~/lib/runtime-config"
 
+import { fetchWithRequestDump } from "~/lib/request-dump"
+
 export async function createDeepSeekResponses(
   body: RequestInit["body"],
   config: RuntimeConfig["providers"]["deepseek"],
@@ -22,7 +24,7 @@ export async function createDeepSeekResponses(
     throw new Error("DeepSeek base URL must use HTTPS")
   }
   const url = `${baseUrl.toString().replace(/\/$/, "")}/responses`
-  return await fetch(url, {
+  return await fetchWithRequestDump(url, {
     method: "POST",
     headers: {
       authorization: `Bearer ${apiKey}`,

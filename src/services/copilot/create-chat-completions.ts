@@ -3,6 +3,7 @@ import { events } from "fetch-event-stream"
 
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { fetchWithRequestDump } from "~/lib/request-dump"
 import { state } from "~/lib/state"
 
 export const createChatCompletions = async (
@@ -28,11 +29,14 @@ export const createChatCompletions = async (
     "X-Initiator": isAgentCall ? "agent" : "user",
   }
 
-  const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  })
+  const response = await fetchWithRequestDump(
+    `${copilotBaseUrl(state)}/chat/completions`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    },
+  )
 
   if (!response.ok) {
     consola.error("Failed to create chat completions", response)

@@ -1,5 +1,5 @@
 export const modelAliases: Readonly<Record<string, string>> = {
-  "codex-auto-review": "gpt-5.6-luna",
+  "codex-auto-review": "gpt-6-luna",
 }
 
 export const modelAliasEntries = Object.entries(modelAliases)

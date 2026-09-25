@@ -79,11 +79,10 @@ export async function handleResponse(c: Context): Promise<Response> {
       upstreamSignal,
     )
   } else {
-    upstream = await createResponses(
-      upstreamBody,
-      upstreamSignal,
-      c.req.raw.headers,
-    )
+    upstream = await createResponses(upstreamBody, upstreamSignal, {
+      requestHeaders: c.req.raw.headers,
+      originalBody: body,
+    })
   }
   consola.info(
     `Response received from ${modelLabel}: ${upstream.status} in ${Date.now() - startedAt}ms`,

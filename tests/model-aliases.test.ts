@@ -34,15 +34,15 @@ beforeEach(() => {
     object: "list",
     data: [
       {
-        id: "gpt-5.6-luna",
-        name: "GPT-5.6 Luna",
+        id: "gpt-6-luna",
+        name: "GPT-6 Luna",
         object: "model",
         vendor: "OpenAI",
-        version: "5.6",
+        version: "6",
         preview: false,
         model_picker_enabled: true,
         capabilities: {
-          family: "gpt-5.6",
+          family: "gpt-6",
           limits: { max_output_tokens: 16_384 },
           object: "model_capabilities",
           supports: { tool_calls: true },
@@ -91,7 +91,7 @@ describe("model aliases", () => {
 
     const forwardedPayload = JSON.parse(init.body) as unknown
     expect(forwardedPayload).toMatchObject({
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       max_tokens: 16_384,
     })
     expect(infoMock).toHaveBeenCalledWith(
@@ -103,11 +103,11 @@ describe("model aliases", () => {
       '{"id":"response-1","object":"chat.completion","choices":[]}',
     )
     expect(infoMock).toHaveBeenCalledWith(
-      "Request sent to codex-auto-review (gpt-5.6-luna)",
+      "Request sent to codex-auto-review (gpt-6-luna)",
     )
     expect(infoMock).toHaveBeenCalledWith(
       expect.stringMatching(
-        /^Response received from codex-auto-review \(gpt-5\.6-luna\) in \d+ms$/,
+        /^Response received from codex-auto-review \(gpt-6-luna\) in \d+ms$/,
       ),
     )
   })

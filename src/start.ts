@@ -9,6 +9,8 @@ import invariant from "tiny-invariant"
 import { refreshCodexModels } from "./lib/codex-models"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
+import { configureRequestDump } from "./lib/request-dump"
+import { responsesDiagnosticLogPath } from "./lib/responses-diagnostics"
 import { loadRuntimeConfig } from "./lib/runtime-config"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
@@ -19,6 +21,7 @@ import { server } from "./server"
 interface RunServerOptions {
   port: number
   verbose: boolean
+  dumpRequests?: boolean
   accountType: string
   manual: boolean
   rateLimit?: number
@@ -35,6 +38,7 @@ interface RunServerOptions {
 // eslint-disable-next-line max-lines-per-function
 export async function runServer(options: RunServerOptions): Promise<void> {
   state.verbose = options.verbose
+  await configureRequestDump(options.dumpRequests)
 
   if (options.proxyEnv) {
     initProxyFromEnv()
@@ -43,6 +47,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   if (options.verbose) {
     consola.level = 5
     consola.info("Verbose logging enabled")
+    consola.info("Responses diagnostic log:", responsesDiagnosticLogPath)
   }
 
   state.accountType = options.accountType
@@ -155,6 +160,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   serve({
     fetch: server.fetch,
     port: options.port,
+    // Reasoning streams can pause longer than Bun's default 10-second idle limit.
+    bun: { idleTimeout: 0 },
   })
 }
 
@@ -174,13 +181,19 @@ export const start = defineCommand({
       alias: "v",
       type: "boolean",
       default: false,
-      description: "Enable verbose logging",
+      description: "Enable verbose logging and Responses request diagnostics",
     },
     "account-type": {
       alias: "a",
       type: "string",
       default: "individual",
       description: "Account type to use (individual, business, enterprise)",
+    },
+    "dump-requests": {
+      type: "boolean",
+      default: false,
+      description:
+        "Dump full API request bodies and credential-redacted headers to logs/requests.sqlite",
     },
     manual: {
       type: "boolean",
@@ -245,6 +258,7 @@ export const start = defineCommand({
     return runServer({
       port: Number.parseInt(args.port, 10),
       verbose: args.verbose,
+      dumpRequests: args["dump-requests"],
       accountType: args["account-type"],
       manual: args.manual,
       rateLimit,
