@@ -49,6 +49,7 @@ const layerSchema = z.strictObject({
         .strictObject({
           enabled: z.boolean().optional(),
           credentialPath: z.string().min(1).optional(),
+          oauthClientSecret: z.string().trim().min(1).optional(),
         })
         .optional(),
     })
@@ -86,6 +87,7 @@ export interface RuntimeConfig {
     antigravity: {
       enabled: boolean
       credentialPath?: string
+      oauthClientSecret?: string
     }
   }
   catalog: {

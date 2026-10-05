@@ -10,6 +10,7 @@ import {
   AntigravityCredentialStore,
   type AntigravityFetch,
   readCredentialFile,
+  refreshCredential,
   runAntigravityLogin,
 } from "../src/services/antigravity/auth"
 import { rejection } from "./support/async-errors"
@@ -73,6 +74,7 @@ async function startLogin(
 ) {
   const advertised = Promise.withResolvers<string>()
   const login = runAntigravityLogin({
+    oauthClientSecret: "test-oauth-secret",
     credentialPath,
     fetchImpl,
     onAuthorizationUrl: (url) => advertised.resolve(url),
@@ -206,6 +208,7 @@ describe("AntigravityCredentialStore", () => {
     }
 
     const credential = await new AntigravityCredentialStore(path, {
+      oauthClientSecret: "test-oauth-secret",
       fetchImpl,
     }).current()
 
@@ -234,6 +237,7 @@ describe("AntigravityCredentialStore", () => {
     }
 
     const credential = await new AntigravityCredentialStore(path, {
+      oauthClientSecret: "test-oauth-secret",
       fetchImpl,
     }).current()
 
@@ -261,7 +265,10 @@ describe("AntigravityCredentialStore", () => {
         refresh_token: "rotated-refresh-token",
       })
     }
-    const store = new AntigravityCredentialStore(path, { fetchImpl })
+    const store = new AntigravityCredentialStore(path, {
+      oauthClientSecret: "test-oauth-secret",
+      fetchImpl,
+    })
 
     const [first, second] = await Promise.all([
       store.current(),
@@ -359,4 +366,18 @@ describe("runAntigravityLogin", () => {
 
     expect(error.message).toContain("Timed out after 150 ms")
   })
+})
+
+test("OAuth refresh forwards the configured client secret", async () => {
+  let sentSecret: string | null = null
+  await refreshCredential(cliProxyCredential(), {
+    oauthClientSecret: "configured-oauth-secret",
+    fetchImpl: (_url, init) => {
+      sentSecret = new URLSearchParams(init.body as string).get("client_secret")
+      return Promise.resolve(
+        jsonResponse({ access_token: "fresh", expires_in: 3600 }),
+      )
+    },
+  })
+  expect(sentSecret).toBe("configured-oauth-secret")
 })

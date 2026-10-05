@@ -6,19 +6,15 @@ import { createServer } from "node:http"
 import { setTimeout as delay } from "node:timers/promises"
 import { z } from "zod"
 
-/**
- * Antigravity's OAuth parameters, mirroring the desktop client as captured in
- * the CLIProxyAPI reference snapshot (`internal/auth/antigravity/constants.go`).
- * The client secret is the public installed-app secret already present in that
- * snapshot; it is not a user credential. Re-verify these against a real login
- * before trusting them.
- */
+import { loadRuntimeConfig } from "~/lib/runtime-config"
+import { state } from "~/lib/state"
+
+/** Antigravity OAuth endpoints and public client parameters. */
 export const ANTIGRAVITY_OAUTH = {
   authEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
   callbackPath: "/oauth-callback",
   clientId:
     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-  clientSecret: "",
   defaultCallbackPort: 51121,
   scopes: [
     "https://www.googleapis.com/auth/cloud-platform",
@@ -100,6 +96,7 @@ const tokenResponseSchema = z.looseObject({
 })
 
 export interface AntigravityTransportOptions {
+  oauthClientSecret?: string
   fetchImpl?: AntigravityFetch
   now?: () => number
 }
@@ -206,6 +203,20 @@ export async function writeCredentialFile(
   await rename(temporaryPath, path)
 }
 
+async function oauthClientSecret(override?: string): Promise<string> {
+  const secret =
+    override
+    ?? (state.runtimeConfig ?? (await loadRuntimeConfig())).providers
+      .antigravity.oauthClientSecret
+  if (!secret?.trim()) {
+    throw new AntigravityAuthError(
+      "oauth_client_secret_missing",
+      "Set defaults.providers.antigravity.oauthClientSecret in config.json before Antigravity login or token refresh",
+    )
+  }
+  return secret
+}
+
 export async function refreshCredential(
   credential: AntigravityCredential,
   options: AntigravityTransportOptions = {},
@@ -223,7 +234,7 @@ export async function refreshCredential(
     ANTIGRAVITY_OAUTH.tokenEndpoint,
     {
       client_id: ANTIGRAVITY_OAUTH.clientId,
-      client_secret: ANTIGRAVITY_OAUTH.clientSecret,
+      client_secret: await oauthClientSecret(options.oauthClientSecret),
       grant_type: "refresh_token",
       refresh_token: refreshToken,
     },
@@ -255,12 +266,14 @@ export async function refreshCredential(
  */
 export class AntigravityCredentialStore {
   readonly path: string
+  private readonly oauthClientSecret: string | undefined
   private readonly fetchImpl: AntigravityFetch
   private readonly now: () => number
   private inFlight: Promise<AntigravityCredential> | undefined
 
   constructor(path: string, options: AntigravityTransportOptions = {}) {
     this.path = path
+    this.oauthClientSecret = options.oauthClientSecret
     this.fetchImpl = options.fetchImpl ?? fetch
     this.now = options.now ?? Date.now
   }
@@ -285,6 +298,7 @@ export class AntigravityCredentialStore {
       now: this.now,
     })
     const refreshed = await refreshCredential(credential, {
+      oauthClientSecret: this.oauthClientSecret,
       fetchImpl: this.fetchImpl,
       now: this.now,
     })
@@ -311,7 +325,7 @@ export function buildAuthorizationUrl(
 
 export async function exchangeAuthorizationCode(
   fetchImpl: AntigravityFetch,
-  options: { code: string; redirectUri: string },
+  options: { code: string; redirectUri: string; oauthClientSecret?: string },
 ): Promise<{
   access_token: string
   expires_in: number
@@ -319,7 +333,7 @@ export async function exchangeAuthorizationCode(
 }> {
   const payload = await postForm(fetchImpl, ANTIGRAVITY_OAUTH.tokenEndpoint, {
     client_id: ANTIGRAVITY_OAUTH.clientId,
-    client_secret: ANTIGRAVITY_OAUTH.clientSecret,
+    client_secret: await oauthClientSecret(options.oauthClientSecret),
     code: options.code,
     grant_type: "authorization_code",
     redirect_uri: options.redirectUri,
@@ -374,6 +388,7 @@ export async function runAntigravityLogin(
   })
 
   const tokens = await exchangeAuthorizationCode(fetchImpl, {
+    oauthClientSecret: options.oauthClientSecret,
     code,
     redirectUri,
   })

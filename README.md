@@ -494,3 +494,7 @@ bun run start
 Stop the proxy, get the latest repository code, and run [install.ps1](install.ps1) again using the installation command above to update dependencies, rebuild the CLI, refresh the catalog, and update Codex's configuration. Repeated installs reuse the same provider entry and run GitHub authentication again as the final step.
 
 Start the proxy again with `copilot-api start`, then restart Codex.
+
+### Antigravity OAuth client secret
+
+Set `defaults.providers.antigravity.oauthClientSecret` in your local `config.json` before Antigravity login or token refresh. The main proxy and standalone Antigravity scripts use the configured value. Named environments can override it using `providers.antigravity.oauthClientSecret`. Keep `config.json` untracked; never commit the actual secret.

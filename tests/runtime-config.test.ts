@@ -577,3 +577,30 @@ test("rejects a Codex transport that is not implemented", async () => {
     }),
   ).rejects.toThrow()
 })
+
+test("Antigravity OAuth secret inherits and supports environment overrides", async () => {
+  const file = await fixture({
+    version: 1,
+    defaults: {
+      providers: { antigravity: { oauthClientSecret: "default-secret" } },
+    },
+    environments: {
+      custom: {
+        providers: { antigravity: { oauthClientSecret: "override-secret" } },
+      },
+    },
+  })
+  expect(
+    (await loadRuntimeConfig({ configPath: file, env: {} })).providers
+      .antigravity.oauthClientSecret,
+  ).toBe("default-secret")
+  expect(
+    (
+      await loadRuntimeConfig({
+        configPath: file,
+        environment: "custom",
+        env: {},
+      })
+    ).providers.antigravity.oauthClientSecret,
+  ).toBe("override-secret")
+})
