@@ -6,6 +6,7 @@ import { resolveModelRoute } from "../src/lib/model-routing"
 
 const config: RuntimeConfig = {
   environment: "test",
+  compaction: { enabled: false },
   providers: {
     copilot: { enabled: true },
     deepseek: {
@@ -15,7 +16,12 @@ const config: RuntimeConfig = {
       models: ["deepseek-flash"],
     },
   },
-  catalog: { enabled: false, customFiles: [], outputFile: "models.json" },
+  catalog: {
+    enabled: false,
+    customFiles: [],
+    disabledModels: [],
+    outputFile: "models.json",
+  },
 }
 
 test("routes configured DeepSeek models exactly", () => {

@@ -49,7 +49,7 @@ ORDER BY started_at DESC
 LIMIT 50;
 ```
 
-Compare each incoming body to its upstream body (aliases or provider translation can intentionally change them):
+Compare each incoming body to its upstream body (aliases, enabled compaction model routing, or provider translation can intentionally change them):
 
 ```sql
 SELECT i.trace_id, i.model AS incoming_model, u.model AS upstream_model,
@@ -60,6 +60,8 @@ JOIN requests AS u ON u.trace_id = i.trace_id AND u.stage = 'upstream'
 WHERE i.stage = 'incoming'
 ORDER BY i.started_at DESC;
 ```
+
+With compaction model routing enabled in the selected JSON configuration, a marked request can show an incoming Sol/Astra model and an upstream `gpt-6-luna` model. Different body hashes are expected: compare parsed bodies excluding only top-level `model` for a Copilot-to-Copilot override. Session/thread headers and encrypted content remain under existing provider behavior. An unmarked ordinary turn or disabled override retains its normal routing. Response status 200 confirms headers were received; it does not prove the stream completed or Codex successfully resumed after compaction.
 
 Inspect the complete request pair and recorded response headers:
 

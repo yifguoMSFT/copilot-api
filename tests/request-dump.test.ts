@@ -12,6 +12,7 @@ import {
   requestDumpMiddleware,
   setRequestDump,
 } from "../src/lib/request-dump"
+import { loadRuntimeConfig } from "../src/lib/runtime-config"
 import { state } from "../src/lib/state"
 import { server } from "../src/server"
 
@@ -79,6 +80,39 @@ const post = (url: string, body: string) =>
     },
     body,
   })
+
+test.each([false, true])(
+  "dumps original and effective compaction models (enabled: %s)",
+  async (enabled) => {
+    state.runtimeConfig = await loadRuntimeConfig({
+      cwd: import.meta.dir,
+      env: {},
+    })
+    state.runtimeConfig.compaction = { enabled, model: "gpt-6-luna" }
+    const payload = {
+      model: "gpt-6-sol",
+      client_metadata: {
+        "x-codex-turn-metadata": '{"request_kind":"compaction"}',
+      },
+      input: [{ encrypted_content: "synthetic-ciphertext" }],
+      unknown: { model: "nested" },
+    }
+    const body = JSON.stringify(payload)
+    await post("/v1/responses", body)
+    const [incoming, upstream] = rows()
+    expect(rows()).toHaveLength(2)
+    expect(incoming.trace_id).toBe(upstream.trace_id)
+    expect(incoming.model).toBe("gpt-6-sol")
+    expect(upstream.model).toBe(enabled ? "gpt-6-luna" : "gpt-6-sol")
+    expect(bodyText(incoming)).toBe(body)
+    expect(JSON.parse(bodyText(upstream))).toEqual({
+      ...payload,
+      model: enabled ? "gpt-6-luna" : "gpt-6-sol",
+    })
+    expect(incoming.body_sha256 === upstream.body_sha256).toBe(!enabled)
+    expect(requestHeaders(upstream)["x-custom-state"]).toBe("state-to-compare")
+  },
+)
 
 test("captures complete encrypted bodies and headers on both Responses boundaries", async () => {
   const body =

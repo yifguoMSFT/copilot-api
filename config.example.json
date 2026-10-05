@@ -1,6 +1,10 @@
 {
   "version": 1,
   "defaults": {
+    "compaction": {
+      "enabled": false,
+      "model": "gpt-6-luna"
+    },
     "providers": {
       "copilot": { "enabled": true },
       "deepseek": {
@@ -13,6 +17,7 @@
     "catalog": {
       "enabled": true,
       "customFiles": ["./codex-models-custom.json"],
+      "disabledModels": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
       "outputFile": "./generated/codex-models.json"
     }
   },

@@ -22,3 +22,4 @@ kanban-archive
 /package-lock.json
 /codex-models.json
 /codex-models-upstream.json
+/config.json

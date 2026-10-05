@@ -80,6 +80,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     await refreshCodexModels({
       outputFile: runtimeConfig.catalog.outputFile,
       customFiles: runtimeConfig.catalog.customFiles,
+      disabledModels: runtimeConfig.catalog.disabledModels,
       deepSeekModels:
         runtimeConfig.providers.deepseek.enabled ?
           runtimeConfig.providers.deepseek.models

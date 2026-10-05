@@ -2,7 +2,10 @@ import type { Context } from "hono"
 
 import consola from "consola"
 
+import type { RuntimeConfig } from "~/lib/runtime-config"
+
 import { awaitApproval } from "~/lib/approval"
+import { compactionMetadataSource } from "~/lib/compaction-routing"
 import { isModelAlias, resolveModelAlias } from "~/lib/model-aliases"
 import { resolveModelRoute } from "~/lib/model-routing"
 import { forwardHeaders } from "~/lib/proxy-headers"
@@ -40,8 +43,9 @@ export async function handleResponse(c: Context): Promise<Response> {
   const {
     body: upstreamBody,
     requestedModel,
+    upstreamModel,
     provider,
-  } = resolveResponseModel(body)
+  } = resolveResponseModel(body, c.req.raw.headers)
   const shouldLogContent =
     requestedModel !== undefined && isModelAlias(requestedModel)
   if (shouldLogContent) {
@@ -65,7 +69,7 @@ export async function handleResponse(c: Context): Promise<Response> {
     )
   }
 
-  const modelLabel = formatModelLabel(requestedModel)
+  const modelLabel = formatModelLabel(requestedModel, upstreamModel)
   consola.info(`Request sent to ${modelLabel}`)
   let upstream: Response
   if (provider === "deepseek") {
@@ -126,10 +130,13 @@ export async function handleResponse(c: Context): Promise<Response> {
   })
 }
 
-const formatModelLabel = (requestedModel?: string): string => {
+const formatModelLabel = (
+  requestedModel?: string,
+  upstreamModel?: string,
+): string => {
   if (requestedModel === undefined) return "unknown model"
 
-  const resolvedModel = resolveModelAlias(requestedModel)
+  const resolvedModel = upstreamModel ?? resolveModelAlias(requestedModel)
   if (resolvedModel === requestedModel) return requestedModel
 
   return `${requestedModel} (${resolvedModel})`
@@ -137,9 +144,11 @@ const formatModelLabel = (requestedModel?: string): string => {
 
 const resolveResponseModel = (
   body: ArrayBuffer,
+  headers: Headers,
 ): {
   body: ArrayBuffer | string
   requestedModel?: string
+  upstreamModel?: string
   provider: "copilot" | "deepseek"
 } => {
   const text = new TextDecoder().decode(body)
@@ -152,8 +161,9 @@ const resolveResponseModel = (
     if (typeof payload.model !== "string" || payload.model.length === 0) {
       throw new Error("Responses model must be a non-empty string")
     }
-    const config = state.runtimeConfig ?? {
+    const config: RuntimeConfig = state.runtimeConfig ?? {
       environment: "legacy",
+      compaction: { enabled: false },
       providers: {
         copilot: { enabled: true },
         deepseek: {
@@ -163,18 +173,47 @@ const resolveResponseModel = (
           models: ["deepseek-flash", "deepseek-v4-pro"],
         },
       },
-      catalog: { enabled: false, customFiles: [], outputFile: "" },
+      catalog: {
+        enabled: false,
+        customFiles: [],
+        disabledModels: [],
+        outputFile: "",
+      },
     }
-    const route = resolveModelRoute(payload.model, config)
+    const metadataSource =
+      config.compaction.enabled ?
+        compactionMetadataSource(headers, payload)
+      : undefined
+    const target =
+      metadataSource === undefined ? payload.model : config.compaction.model
+    if (target === undefined) {
+      throw new Error("compaction.model is required when compaction is enabled")
+    }
+    const route = resolveModelRoute(target, config)
     if (route.provider === "deepseek") validateDeepSeekPayload(payload)
+    if (metadataSource !== undefined) {
+      consola.info("Compaction model routing", {
+        requestedModel: payload.model,
+        configuredModel: target,
+        upstreamModel: route.upstreamModel,
+        provider: route.provider,
+        metadataSource,
+      })
+    }
 
     if (route.upstreamModel === payload.model) {
-      return { body, requestedModel: payload.model, provider: route.provider }
+      return {
+        body,
+        requestedModel: payload.model,
+        upstreamModel: route.upstreamModel,
+        provider: route.provider,
+      }
     }
 
     return {
       body: JSON.stringify({ ...payload, model: route.upstreamModel }),
       requestedModel: payload.model,
+      upstreamModel: route.upstreamModel,
       provider: route.provider,
     }
   } catch (error) {

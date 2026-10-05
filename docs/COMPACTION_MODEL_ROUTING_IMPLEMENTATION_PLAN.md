@@ -55,7 +55,7 @@ Extend the version 1 configuration layer with a `compaction` object, supported i
 }
 ```
 
-Load this file using the existing `--config` option or `COPILOT_API_CONFIG`. Select the named environment through the existing environment selector. Merely placing a file named `config.json` in the working directory does not currently load it.
+Load `config.json` automatically from the resolved package folder, alongside the default catalog (`dist/..` for installed execution), independently of the working directory. An explicit `--config` takes precedence over `COPILOT_API_CONFIG`, which takes precedence over automatic discovery. Explicit relative paths resolve from the working directory. Skip only a missing default file; explicit missing files and invalid/unreadable files fail startup. Select the named environment through the existing environment selector.
 
 | Setting | Behavior |
 | --- | --- |

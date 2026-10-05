@@ -19,6 +19,7 @@ export interface CodexCatalogOptions {
   customFiles: Array<string>
   upstreamCacheFile?: string
   deepSeekModels?: Array<string>
+  disabledModels?: Array<string>
 }
 
 export async function refreshCodexModels(
@@ -90,6 +91,8 @@ export async function refreshCodexModels(
       ]),
     )
 
+    const exclusions = excludeModels(models, legacy ? [] : input.disabledModels)
+
     await fs.mkdir(directory, { recursive: true })
     await fs.writeFile(
       temporary,
@@ -99,6 +102,9 @@ export async function refreshCodexModels(
     consola.info(
       `Updated Codex model catalog: ${output} (${models.size} models)`,
     )
+    if (exclusions !== undefined) {
+      consola.info("Codex catalog exclusions", exclusions)
+    }
   } catch (error) {
     consola.warn(
       "Could not refresh Codex model catalog; existing catalog kept",
@@ -111,4 +117,18 @@ export async function refreshCodexModels(
       )
     })
   }
+}
+
+function excludeModels(
+  models: Map<unknown, unknown>,
+  configured: Array<string> = [],
+): { removed: Array<string>; unmatched: Array<string> } | undefined {
+  if (configured.length === 0) return undefined
+  const removed: Array<string> = []
+  const unmatched: Array<string> = []
+  for (const slug of new Set(configured)) {
+    if (models.delete(slug)) removed.push(slug)
+    else unmatched.push(slug)
+  }
+  return { removed, unmatched }
 }

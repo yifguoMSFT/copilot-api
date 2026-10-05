@@ -100,6 +100,7 @@ See `config.example.json` and `src/lib/runtime-config.ts`.
 - Merge order: built-in defaults, file `defaults`, selected `environments` entry, then supported `COPILOT_API_*` overrides. Arrays are replaced.
 - Schema requires `version: 1` and rejects unknown configuration fields. An explicitly selected environment must exist when a config file is supplied.
 - File catalog paths resolve relative to that config file, not the process working directory.
+- Default `config.json` lookup uses the resolved package folder alongside the default catalog (`dist/..` or `src/..`); launching the CLI from another directory does not change it. Explicit config paths override this lookup.
 - At least one provider must be enabled.
 
 Built-in defaults enable Copilot and catalog refresh, disable DeepSeek, and use no custom catalog files. Catalog output defaults to `codex-models.json` in the package root, one directory above the resolved CLI entry file's folder (`dist/..` for built/linked execution and `src/..` for source execution). Symlinks resolve to the real entry file; the launch working directory does not determine the destination. The catalog stays outside build output and survives rebuilds. Explicit config/environment output overrides still take precedence. This replaces the previous application-data default; GitHub credential storage remains under `<home>/.local/share/copilot-api`. DeepSeek defaults to `https://api.deepseek.com`, key variable `DEEPSEEK_API_KEY`, and model names `deepseek-flash` and `deepseek-v4-pro`.
