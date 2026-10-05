@@ -73,6 +73,7 @@ beforeEach(() => {
   state.lastRequestTimestamp = undefined
   state.runtimeConfig = {
     environment: "test",
+    ...defaultProviderConfig(),
     providers: { ...defaultProviderConfig().providers, codex: codexConfig() },
   }
   state.publishedModels = buildPublishedModels({
@@ -285,6 +286,7 @@ describe("Codex passthrough gateway", () => {
   test("leaves the Copilot path unauthenticated as before", async () => {
     state.runtimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: { ...defaultProviderConfig().providers, codex: codexConfig() },
     }
     state.copilotToken = "copilot-token"
@@ -388,6 +390,7 @@ describe("Codex passthrough upstream responses", () => {
   test("rejects a Codex suffix while the provider is disabled", async () => {
     state.runtimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...defaultProviderConfig().providers,
         codex: codexConfig({ enabled: false }),
@@ -415,6 +418,7 @@ describe("Codex passthrough upstream responses", () => {
   test("routes a Copilot suffix to Copilot without the Codex gateway key", async () => {
     state.runtimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...defaultProviderConfig().providers,
         codex: codexConfig({ models: ["codex-test-model"] }),

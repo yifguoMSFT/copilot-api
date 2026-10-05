@@ -1,8 +1,11 @@
 import type { Context } from "hono"
 
 import consola from "consola"
+import { homedir } from "node:os"
+import { join } from "node:path"
 
 import { awaitApproval } from "~/lib/approval"
+import { compactionMetadataSource } from "~/lib/compaction-routing"
 import { HttpStatusError } from "~/lib/error"
 import { isModelAlias, resolveModelAlias } from "~/lib/model-aliases"
 import { resolveModelRoute, type ModelProvider } from "~/lib/model-routing"
@@ -10,20 +13,18 @@ import { forwardHeaders } from "~/lib/proxy-headers"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { defaultProviderConfig, type RuntimeConfig } from "~/lib/runtime-config"
 import { state } from "~/lib/state"
+import { AntigravityCredentialStore } from "~/services/antigravity/auth"
+import { createAntigravityResponses } from "~/services/antigravity/create-responses"
 import { createCodexResponses } from "~/services/codex/forward-responses"
 import { createResponses } from "~/services/copilot/create-responses"
 import { createDeepSeekResponses } from "~/services/deepseek/create-responses"
-import { createAntigravityResponses } from "~/services/antigravity/create-responses"
-import { AntigravityCredentialStore } from "~/services/antigravity/auth"
-import { homedir } from "node:os"
-import { join } from "node:path"
 
 import { toCodexAuthErrorResponse } from "./codex-passthrough"
 import { stripReasoningContent } from "./gpt-reasoning-content"
 import { normalizeFunctionSchemaRoots } from "./normalize-function-schema-roots"
 import { sanitizeInputItemIds } from "./sanitize-input-ids"
-import { stripRejectedToolCalls } from "./strip-rejected-tool-calls"
 import { normalizeResponsesItemIds } from "./sse-item-id-normalizer"
+import { stripRejectedToolCalls } from "./strip-rejected-tool-calls"
 
 const forwardedResponseHeaders = [
   "cache-control",
@@ -52,9 +53,10 @@ export async function handleResponse(c: Context): Promise<Response> {
   const {
     body: upstreamBody,
     requestedModel,
-    provider,
     upstreamModel,
-  } = resolveResponseModel(body)
+    provider,
+    isCompaction,
+  } = resolveResponseModel(body, c.req.raw.headers)
   const shouldLogContent =
     requestedModel !== undefined && isModelAlias(requestedModel)
   if (shouldLogContent) {
@@ -73,65 +75,83 @@ export async function handleResponse(c: Context): Promise<Response> {
     )
   }
 
-  const modelLabel = formatModelLabel(requestedModel)
-  consola.info(`Request sent to ${modelLabel}`)
+  const modelLabel = formatModelLabel(requestedModel, upstreamModel)
+  consola.info(
+    `${isCompaction ? "Compaction request" : "Request"} sent to ${modelLabel}`,
+  )
   if (state.publishedModels?.suffixMode === true) {
     consola.info(
       `Model routed: ${requestedModel ?? "unknown"} → ${provider} (${upstreamModel ?? "unknown"})`,
     )
   }
   let upstream: Response
-  if (provider === "codex") {
-    const codexConfig = state.runtimeConfig?.providers.codex
-    if (codexConfig === undefined) {
-      throw new Error("Codex runtime configuration is not loaded")
+  switch (provider) {
+    case "codex": {
+      const codexConfig = state.runtimeConfig?.providers.codex
+      if (codexConfig === undefined) {
+        throw new Error("Codex runtime configuration is not loaded")
+      }
+      const forwarded = await forwardCodexRequest({
+        headers: c.req.raw.headers,
+        body: upstreamBody,
+        codexConfig,
+        signal: upstreamSignal,
+      })
+      // A login failure is answered locally, but it is still a response for the
+      // model label and content logs, exactly like the Copilot and DeepSeek paths.
+      upstream = "error" in forwarded ? forwarded.error : forwarded.upstream
+
+      break
     }
-    const forwarded = await forwardCodexRequest({
-      headers: c.req.raw.headers,
-      body: upstreamBody,
-      codexConfig,
-      signal: upstreamSignal,
-    })
-    // A login failure is answered locally, but it is still a response for the
-    // model label and content logs, exactly like the Copilot and DeepSeek paths.
-    upstream = "error" in forwarded ? forwarded.error : forwarded.upstream
-  } else if (provider === "antigravity") {
-    const antigravityConfig = state.runtimeConfig?.providers.antigravity
-    if (antigravityConfig === undefined || !antigravityConfig.enabled) {
-      throw new HttpStatusError(400, "Antigravity runtime configuration is not loaded or disabled", "model_provider_disabled")
+    case "antigravity": {
+      const antigravityConfig = state.runtimeConfig?.providers.antigravity
+      if (antigravityConfig === undefined || !antigravityConfig.enabled) {
+        throw new HttpStatusError(
+          400,
+          "Antigravity runtime configuration is not loaded or disabled",
+          "model_provider_disabled",
+        )
+      }
+      if (!state.antigravityCredentialStore) {
+        const defaultPath = join(
+          homedir(),
+          ".cli-proxy-api",
+          "antigravity.json",
+        )
+        const credPath = antigravityConfig.credentialPath ?? defaultPath
+        state.antigravityCredentialStore = new AntigravityCredentialStore(
+          credPath,
+        )
+      }
+      upstream = await createAntigravityResponses(upstreamBody, {
+        credentialStore: state.antigravityCredentialStore,
+        headers: c.req.raw.headers,
+        signal: upstreamSignal,
+      })
+
+      break
     }
-    if (!state.antigravityCredentialStore) {
-      const defaultPath = join(homedir(), ".cli-proxy-api", "antigravity.json")
-      const credPath = antigravityConfig.credentialPath ?? defaultPath
-      state.antigravityCredentialStore = new AntigravityCredentialStore(credPath)
-    }
-    upstream = await createAntigravityResponses(upstreamBody, {
-      credentialStore: state.antigravityCredentialStore,
-      headers: c.req.raw.headers,
-      signal: upstreamSignal,
-    })
-  } else if (provider === "deepseek") {
-    const deepSeekConfig = state.runtimeConfig?.providers.deepseek
-    if (deepSeekConfig === undefined) {
-      throw new Error("DeepSeek runtime configuration is not loaded")
-    }
-    upstream = await createDeepSeekResponses(
-      upstreamBody,
-      deepSeekConfig,
-      {
+    case "deepseek": {
+      const deepSeekConfig = state.runtimeConfig?.providers.deepseek
+      if (deepSeekConfig === undefined) {
+        throw new Error("DeepSeek runtime configuration is not loaded")
+      }
+      upstream = await createDeepSeekResponses(upstreamBody, deepSeekConfig, {
         signal: upstreamSignal,
         headers: c.req.raw.headers,
-      },
-    )
-  } else {
-    upstream = await createResponses(
-      upstreamBody,
-      upstreamSignal,
-      c.req.raw.headers,
-    )
+      })
+
+      break
+    }
+    default: {
+      upstream = await createResponses(upstreamBody, upstreamSignal, {
+        requestHeaders: c.req.raw.headers,
+        originalBody: body,
+      })
+    }
   }
   consola.info(
-    `Response received from ${modelLabel}: ${upstream.status} in ${Date.now() - startedAt}ms`,
+    `${isCompaction ? "Compaction response" : "Response"} received from ${modelLabel}: ${upstream.status} in ${Date.now() - startedAt}ms`,
   )
   if (shouldLogContent) logResponseOutput(requestedModel, upstream.clone())
   // Fetch decodes compressed bodies; streaming normalization can change their size.
@@ -223,10 +243,13 @@ const logUpstreamReady = (
   })
 }
 
-const formatModelLabel = (requestedModel?: string): string => {
+const formatModelLabel = (
+  requestedModel?: string,
+  upstreamModel?: string,
+): string => {
   if (requestedModel === undefined) return "unknown model"
 
-  const resolvedModel = resolveModelAlias(requestedModel)
+  const resolvedModel = upstreamModel ?? resolveModelAlias(requestedModel)
   if (resolvedModel === requestedModel) return requestedModel
 
   return `${requestedModel} (${resolvedModel})`
@@ -249,16 +272,20 @@ const withReasoningEffort = (
 
 const resolveResponseModel = (
   body: ArrayBuffer,
+  headers: Headers,
 ): {
   body: ArrayBuffer | string
   requestedModel?: string
   provider: ModelProvider
   upstreamModel?: string
+  isCompaction: boolean
 } => {
   const text = new TextDecoder().decode(body)
 
   try {
     const payload = JSON.parse(text) as Record<string, unknown>
+    const metadataSource = compactionMetadataSource(headers, payload)
+    const isCompaction = metadataSource !== undefined
     if (payload.model === undefined) {
       throw new HttpStatusError(
         400,
@@ -273,15 +300,28 @@ const resolveResponseModel = (
         "invalid_model",
       )
     }
-    const config = state.runtimeConfig ?? {
+    const config: RuntimeConfig = state.runtimeConfig ?? {
       environment: "legacy",
       ...defaultProviderConfig(),
     }
-    const route = resolveModelRoute(
-      payload.model,
-      config,
-      state.publishedModels,
-    )
+    const target =
+      config.compaction.enabled && isCompaction ?
+        config.compaction.model
+      : payload.model
+    if (target === undefined) {
+      throw new Error("compaction.model is required when compaction is enabled")
+    }
+    const route = resolveModelRoute(target, config, state.publishedModels)
+    if (config.compaction.enabled && isCompaction) {
+      consola.info("Compaction model routing", {
+        requestedModel: payload.model,
+        configuredModel: target,
+        upstreamModel: route.upstreamModel,
+        provider: route.provider,
+        metadataSource,
+      })
+    }
+
     let nextPayload: Record<string, unknown> = payload
     let changed = false
 
@@ -298,15 +338,14 @@ const resolveResponseModel = (
       }
     }
 
-    if (
-      route.provider !== "deepseek"
-      && Array.isArray(nextPayload.input)
-    ) {
+    if (route.provider !== "deepseek" && Array.isArray(nextPayload.input)) {
       const sanitizedIds = sanitizeInputItemIds(nextPayload.input)
       if (sanitizedIds.changed) {
         nextPayload = { ...nextPayload, input: sanitizedIds.input }
         changed = true
-        consola.info(`Sanitized ${sanitizedIds.renamedCount} input item IDs to conform with Responses protocol`)
+        consola.info(
+          `Sanitized ${sanitizedIds.renamedCount} input item IDs to conform with Responses protocol`,
+        )
       }
     }
 
@@ -353,11 +392,13 @@ const resolveResponseModel = (
         provider: route.provider,
         requestedModel: payload.model,
         upstreamModel: route.upstreamModel,
+        isCompaction,
       }
     }
 
     return {
       body: JSON.stringify(nextPayload),
+      isCompaction,
       provider: route.provider,
       requestedModel: payload.model,
       upstreamModel: route.upstreamModel,

@@ -23,6 +23,7 @@ const config = (
   deepseekEnabled = false,
 ): RuntimeConfig => ({
   environment: "test",
+  ...defaultProviderConfig(),
   providers: {
     ...defaultProviderConfig().providers,
     copilot: { enabled: true, stripReasoningContentForGpt },
@@ -225,12 +226,12 @@ test("applies alias rewrite and reasoning cleanup together", async () => {
     input: Array<Record<string, unknown>>
   }
 
-  expect(outbound.model).toBe("gpt-5.6-luna")
+  expect(outbound.model).toBe("gpt-6-luna")
   expect(outbound.input[40]?.content).toEqual([])
   expect(Object.hasOwn(outbound.input[40] ?? {}, "encrypted_content")).toBe(
     false,
   )
   expect(infoMock).toHaveBeenCalledWith(
-    "GPT reasoning sanitized: model=gpt-5.6-luna indices=[40] items=1 contentParts=1 encryptedContent=1",
+    "GPT reasoning sanitized: model=gpt-6-luna indices=[40] items=1 contentParts=1 encryptedContent=1",
   )
 })

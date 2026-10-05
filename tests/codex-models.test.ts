@@ -298,6 +298,7 @@ test("reports the configured models the App catalogue does not describe", async 
 
 const codexEnabledConfig = (models: Array<string> = []): RuntimeConfig => ({
   environment: "test",
+  ...defaultProviderConfig(),
   providers: {
     ...defaultProviderConfig().providers,
     codex: {
@@ -467,6 +468,7 @@ test("leaves the reviewer on the session model while the Codex provider is off",
   }
   const config: RuntimeConfig = {
     environment: "test",
+    ...defaultProviderConfig(),
     providers: {
       ...defaultProviderConfig().providers,
       codex: { ...defaultProviderConfig().providers.codex, enabled: false },
@@ -610,6 +612,7 @@ test("publishes bare definitions while the Codex provider is disabled", async ()
   const published = buildPublishedModels({
     config: {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: defaultProviderConfig().providers,
     },
     officialModels: base.officialModels,
@@ -644,6 +647,16 @@ test("regenerating from the raw base never doubles a suffix", async () => {
   expect(JSON.parse(second)).toEqual(JSON.parse(first.toString()))
   expect(second).not.toContain("(codex)(codex)")
   expect(second).toContain('"version": 2')
+  await writePublishedCatalog({
+    base,
+    outputFile,
+    published,
+    disabledModels: ["gpt-5.6-luna"],
+  })
+  const excluded = await fs.readFile(outputFile, "utf8")
+  expect(excluded).not.toContain('"slug": "gpt-5.6-luna(codex)"')
+  expect(excluded).not.toContain('"slug": "gpt-5.6-luna(copilot)"')
+  expect(excluded).toContain('"slug": "gpt-5.5(codex)"')
   expect(
     (await fs.readdir(path.dirname(outputFile))).some((name) =>
       name.endsWith(".tmp"),
@@ -733,4 +746,73 @@ test("reports a corrupted base cache instead of publishing stale ids", async () 
       upstreamCacheFile: path.join(directory, "missing-upstream.json"),
     }),
   ).toMatchObject({ officialModels: [] })
+})
+
+test.each([false, true])(
+  "excludes merged slugs without filtering the upstream cache (offline: %s)",
+  async (offline) => {
+    const upstream = {
+      version: 2,
+      models: [
+        { slug: "gpt-5.6-luna" },
+        { slug: "gpt-6-luna", description: "retained metadata" },
+        { slug: "sol-fast", description: "overridden by custom" },
+        { slug: "GPT-5.6-LUNA" },
+        { slug: "gpt-5.6-luna-extra" },
+      ],
+    }
+    const cache = path.join(directory, "codex-models-upstream.json")
+    await fs.writeFile(cache, JSON.stringify(upstream))
+    if (offline) fetchMock.mockRejectedValue(new Error("offline"))
+    else fetchMock.mockResolvedValue(Response.json(upstream))
+    const options = {
+      outputFile: path.join(directory, "codex-models.json"),
+      customFiles: [path.join(directory, "codex-models-custom.json")],
+      deepSeekModels: ["deepseek-flash"],
+      disabledModels: [
+        "gpt-5.6-luna",
+        "gpt-5.6-luna",
+        "sol-fast",
+        "deepseek-flash",
+        "future-model",
+      ],
+    }
+    await refreshCodexModels(options)
+    const output = JSON.parse(
+      // eslint-disable-next-line unicorn/prefer-json-parse-buffer
+      await fs.readFile(options.outputFile, "utf8"),
+    ) as { version: number; models: Array<Record<string, unknown>> }
+    expect(output).toEqual({
+      version: 2,
+      models: [
+        { slug: "gpt-6-luna", description: "retained metadata" },
+        { slug: "GPT-5.6-LUNA" },
+        { slug: "gpt-5.6-luna-extra" },
+      ],
+    })
+    expect(infoMock).toHaveBeenCalledWith("Codex catalog exclusions", {
+      removed: ["gpt-5.6-luna", "sol-fast", "deepseek-flash"],
+      unmatched: ["future-model"],
+    })
+    expect(JSON.parse((await fs.readFile(cache)).toString())).toEqual(upstream)
+    fetchMock.mockRejectedValue(new Error("offline"))
+    await refreshCodexModels({ ...options, disabledModels: [] })
+    const restored = JSON.parse(
+      (await fs.readFile(options.outputFile)).toString(),
+    ) as { models: Array<Record<string, unknown>> }
+    expect(restored.models).toContainEqual({ slug: "gpt-5.6-luna" })
+  },
+)
+
+test("writes an empty catalog when every merged model is excluded", async () => {
+  fetchMock.mockResolvedValue(Response.json({ models: [{ slug: "sol" }] }))
+  const outputFile = path.join(directory, "codex-models.json")
+  await refreshCodexModels({
+    outputFile,
+    customFiles: [],
+    disabledModels: ["sol"],
+  })
+  expect(JSON.parse((await fs.readFile(outputFile)).toString())).toEqual({
+    models: [],
+  })
 })

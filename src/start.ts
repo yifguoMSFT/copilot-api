@@ -25,7 +25,9 @@ import {
 } from "./lib/model-sources"
 import { ensureCodexAuthDir, ensurePaths, PATHS } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
+import { configureRequestDump } from "./lib/request-dump"
 import { setRequestLogFile } from "./lib/request-log"
+import { responsesDiagnosticLogPath } from "./lib/responses-diagnostics"
 import { loadRuntimeConfig, type RuntimeConfig } from "./lib/runtime-config"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
@@ -37,6 +39,7 @@ interface RunServerOptions {
   port: number
   hostname?: string
   verbose: boolean
+  dumpRequests?: boolean
   accountType: string
   manual: boolean
   rateLimit?: number
@@ -138,10 +141,13 @@ const projectDirectory = (): string =>
     "..",
   )
 
-const codexCatalogPaths = (directory: string): CodexCatalogPaths => ({
+const codexCatalogPaths = (
+  directory: string,
+  config: RuntimeConfig,
+): CodexCatalogPaths => ({
   cacheFile: path.join(directory, "codex-models-upstream.json"),
-  catalogFile: path.join(directory, "codex-models.json"),
-  customFiles: [path.join(directory, "codex-models-custom.json")],
+  catalogFile: config.catalog.outputFile,
+  customFiles: config.catalog.customFiles,
 })
 
 /**
@@ -210,12 +216,14 @@ async function publishModels(
     officialModels: base.officialModels,
   })
   state.publishedModels = published
-  await writePublishedCatalog({
-    base,
-    deepSeekModels: config.providers.deepseek.models,
-    outputFile: catalogFile,
-    published,
-  })
+  if (config.catalog.enabled)
+    await writePublishedCatalog({
+      base,
+      deepSeekModels: config.providers.deepseek.models,
+      disabledModels: config.catalog.disabledModels,
+      outputFile: catalogFile,
+      published,
+    })
   consola.info(
     published.suffixMode ?
       `Published ${published.entries.size} source-suffixed model ids`
@@ -226,6 +234,7 @@ async function publishModels(
 
 export async function runServer(options: RunServerOptions): Promise<void> {
   state.verbose = options.verbose
+  await configureRequestDump(options.dumpRequests)
 
   setRequestLogFile(PATHS.REQUEST_LOG_PATH)
   consola.info(`Incoming requests are appended to ${PATHS.REQUEST_LOG_PATH}`)
@@ -237,6 +246,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   if (options.verbose) {
     consola.level = 5
     consola.info("Verbose logging enabled")
+    consola.info("Responses diagnostic log:", responsesDiagnosticLogPath)
   }
 
   state.accountType = options.accountType
@@ -257,7 +267,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.runtimeConfig = runtimeConfig
   // Static conflicts fail before any directory or network work happens.
   assertModelRoutingConflicts(runtimeConfig)
-  const catalogPaths = codexCatalogPaths(projectDirectory())
+  const catalogPaths = codexCatalogPaths(projectDirectory(), runtimeConfig)
   const baseCatalog = await loadCodexBaseCatalog(runtimeConfig, catalogPaths)
   if (
     runtimeConfig.providers.deepseek.enabled
@@ -339,6 +349,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     fetch: server.fetch,
     hostname,
     port: options.port,
+    // Reasoning streams can pause longer than Bun's default 10-second idle limit.
+    bun: { idleTimeout: 0 },
   })
 }
 
@@ -358,13 +370,19 @@ export const start = defineCommand({
       alias: "v",
       type: "boolean",
       default: false,
-      description: "Enable verbose logging",
+      description: "Enable verbose logging and Responses request diagnostics",
     },
     "account-type": {
       alias: "a",
       type: "string",
       default: "individual",
       description: "Account type to use (individual, business, enterprise)",
+    },
+    "dump-requests": {
+      type: "boolean",
+      default: false,
+      description:
+        "Dump full API request bodies and credential-redacted headers to logs/requests.sqlite",
     },
     manual: {
       type: "boolean",
@@ -436,6 +454,7 @@ export const start = defineCommand({
       hostname: args.host,
       port: Number.parseInt(args.port, 10),
       verbose: args.verbose,
+      dumpRequests: args["dump-requests"],
       accountType: args["account-type"],
       manual: args.manual,
       rateLimit,

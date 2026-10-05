@@ -162,3 +162,57 @@ test.each([true, false])(
     }
   },
 )
+
+test.each([false, true])(
+  "installation applies exclusions and protects existing files when all excluded=%s",
+  async (allExcluded) => {
+    const configPath = await fixture()
+    const root = path.dirname(path.dirname(configPath))
+    const catalogPath = path.join(root, "codex-models.json")
+    const previous = '{"models":[{"slug":"previous"}]}'
+    const originalConfig = 'model = "gpt-6-luna"\n'
+    await fs.mkdir(path.dirname(configPath), { recursive: true })
+    await fs.writeFile(configPath, originalConfig)
+    await fs.writeFile(catalogPath, previous)
+    await fs.writeFile(
+      path.join(root, "config.json"),
+      JSON.stringify({
+        version: 1,
+        defaults: {
+          catalog: {
+            disabledModels:
+              allExcluded ? ["gpt-5.6-luna", "gpt-6-luna"] : ["gpt-5.6-luna"],
+          },
+        },
+      }),
+    )
+    const fetchMock = spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        models: [{ slug: "gpt-5.6-luna" }, { slug: "gpt-6-luna" }],
+      }),
+    )
+    try {
+      if (allExcluded) {
+        const error: unknown = await setupCodex(
+          root,
+          path.dirname(configPath),
+        ).catch((caught: unknown) => caught)
+        expect(error).toBeInstanceOf(Error)
+        expect((error as Error).message).toContain(
+          "Catalog is empty; check model exclusions",
+        )
+        expect(await fs.readFile(catalogPath, "utf8")).toBe(previous)
+        expect(await fs.readFile(configPath, "utf8")).toBe(originalConfig)
+      } else {
+        await setupCodex(root, path.dirname(configPath))
+        expect(JSON.parse((await fs.readFile(catalogPath)).toString())).toEqual(
+          {
+            models: [{ slug: "gpt-6-luna" }],
+          },
+        )
+      }
+    } finally {
+      fetchMock.mockRestore()
+    }
+  },
+)

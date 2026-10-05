@@ -22,6 +22,7 @@ const configWith = (
   const defaults = defaultProviderConfig().providers
   return {
     environment: "test",
+    ...defaultProviderConfig(),
     providers: {
       ...defaults,
       codex: { ...defaults.codex, ...overrides.codex },

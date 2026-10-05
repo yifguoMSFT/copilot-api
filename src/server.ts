@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 
+import { requestDumpMiddleware } from "./lib/request-dump"
 import { recordIncomingRequest } from "./lib/request-log"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
@@ -12,6 +13,7 @@ import { usageRoute } from "./routes/usage/route"
 
 export const server = new Hono()
 
+server.use(requestDumpMiddleware)
 server.use(cors())
 
 const readBodyForLog = async (

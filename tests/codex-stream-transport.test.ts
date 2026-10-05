@@ -64,6 +64,7 @@ beforeAll(() => {
   state.lastRequestTimestamp = undefined
   state.runtimeConfig = {
     environment: "test",
+    ...defaultProviderConfig(),
     providers: {
       ...defaultProviderConfig().providers,
       codex: {

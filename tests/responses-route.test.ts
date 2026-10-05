@@ -1,7 +1,10 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import consola from "consola"
 
-import { defaultProviderConfig } from "../src/lib/runtime-config"
+import {
+  defaultProviderConfig,
+  loadRuntimeConfig,
+} from "../src/lib/runtime-config"
 import { state } from "../src/lib/state"
 import { server } from "../src/server"
 import automationUpdateNamespace from "./fixtures/deepseek-schema/automation-update.tools.json"
@@ -36,6 +39,7 @@ const withDeclaredRoot = (namespace: NamespaceTool): NamespaceTool => ({
 })
 
 const originalFetch = globalThis.fetch
+const originalState = { ...state }
 const originalPrompt = consola.prompt.bind(consola)
 const originalInfo = consola.info.bind(consola)
 const fetchMock = mock((_input: string | URL | Request, _init?: RequestInit) =>
@@ -59,16 +63,19 @@ beforeEach(() => {
   state.copilotToken = "test-copilot-token"
   state.vsCodeVersion = "1.0.0"
   state.manualApprove = false
+  state.verbose = false
   state.rateLimitSeconds = undefined
   state.rateLimitWait = false
   state.responsesStableItemIds = true
   state.lastRequestTimestamp = undefined
+  state.runtimeConfig = undefined
 })
 
 afterAll(() => {
   globalThis.fetch = originalFetch
   consola.prompt = originalPrompt
   consola.info = originalInfo
+  Object.assign(state, originalState)
 })
 
 // The Responses API requires a model; these cases exercise transport
@@ -98,6 +105,7 @@ describe("DeepSeek forwarding", () => {
       const previousConfig = state.runtimeConfig
       state.runtimeConfig = {
         environment: "test",
+        ...defaultProviderConfig(),
         providers: {
           ...defaultProviderConfig().providers,
           copilot: { enabled: true, stripReasoningContentForGpt: true },
@@ -154,6 +162,7 @@ describe("DeepSeek forwarding", () => {
     const previousConfig = state.runtimeConfig
     state.runtimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...defaultProviderConfig().providers,
         copilot: { enabled: true, stripReasoningContentForGpt: true },
@@ -230,6 +239,7 @@ describe("DeepSeek forwarding", () => {
     const previousConfig = state.runtimeConfig
     state.runtimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...defaultProviderConfig().providers,
         copilot: { enabled: true, stripReasoningContentForGpt: true },
@@ -293,7 +303,298 @@ describe("DeepSeek forwarding", () => {
   })
 })
 
+const compactHeaders = {
+  "x-codex-turn-metadata": '{"request_kind":"compaction"}',
+  "session-id": "test-session",
+  "thread-id": "test-thread",
+}
+
+async function enableCompaction(model = "gpt-6-luna") {
+  state.runtimeConfig = await loadRuntimeConfig({
+    packageRoot: import.meta.dir,
+    env: {},
+  })
+  state.runtimeConfig.compaction = { enabled: true, model }
+  state.runtimeConfig.providers.copilot.stripReasoningContentForGpt = false
+}
+
+const upstreamBody = (index = 0): string => {
+  const [, init] = fetchMock.mock.calls[index] as [string, RequestInit]
+  return typeof init.body === "string" ?
+      init.body
+    : new TextDecoder().decode(init.body as ArrayBuffer)
+}
+
+const upstreamModel = (index = 0): unknown =>
+  (JSON.parse(upstreamBody(index)) as Record<string, unknown>).model
+
+describe("Compaction request handling", () => {
+  test("uses body metadata fallback while respecting header precedence", async () => {
+    await enableCompaction()
+    const body = JSON.stringify({
+      model: "gpt-6-sol",
+      client_metadata: {
+        "x-codex-turn-metadata": compactHeaders["x-codex-turn-metadata"],
+      },
+    })
+    await post("/v1/responses", body)
+    expect(upstreamModel()).toBe("gpt-6-luna")
+    await post("/v1/responses", body, {
+      headers: { "x-codex-turn-metadata": "broken" },
+    })
+    expect(upstreamBody(1)).toBe(body)
+  })
+
+  test("isolates concurrent and subsequent normal turns including historical compaction text", async () => {
+    await enableCompaction()
+    const ordinary = JSON.stringify({
+      model: "gpt-6-sol",
+      input: [
+        {
+          role: "user",
+          content: "You are performing a CONTEXT CHECKPOINT COMPACTION",
+        },
+      ],
+    })
+    await Promise.all([
+      post("/v1/responses", '{"model":"gpt-6-astra"}', {
+        headers: compactHeaders,
+      }),
+      post("/v1/responses", ordinary),
+    ])
+    const models = [0, 1].map((index) => upstreamModel(index)).sort()
+    expect(models).toEqual(["gpt-6-luna", "gpt-6-sol"])
+    await post("/v1/responses", ordinary)
+    expect(upstreamBody(2)).toBe(ordinary)
+    expect(state.runtimeConfig?.compaction.model).toBe("gpt-6-luna")
+  })
+
+  test("keeps existing malformed and missing model behavior", async () => {
+    await enableCompaction()
+    for (const body of ["broken", '{"model":123}', '{"model":""}']) {
+      expect(
+        (await post("/v1/responses", body, { headers: compactHeaders })).status,
+      ).toBe(400)
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(
+      (await post("/v1/responses", "{}", { headers: compactHeaders })).status,
+    ).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test("surfaces upstream rejection without retry or response model rewriting", async () => {
+    await enableCompaction()
+    const error = { model: "gpt-6-luna", error: { message: "cannot decrypt" } }
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(Response.json(error, { status: 400 })),
+    )
+    const response = await post("/v1/responses", '{"model":"gpt-6-sol"}', {
+      headers: compactHeaders,
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual(error)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test("streams before completion while retaining item normalization and upstream model", async () => {
+    await enableCompaction()
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value
+      },
+    })
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(stream, {
+          headers: { "content-type": "text/event-stream" },
+        }),
+      ),
+    )
+    controller?.enqueue(
+      encoder.encode(
+        'event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":0,"item":{"id":"first"}}\n\n',
+      ),
+    )
+    const response = await post(
+      "/v1/responses",
+      '{"model":"gpt-6-sol","stream":true}',
+      { headers: compactHeaders },
+    )
+    const reader = (
+      response.body as ReadableStream<Uint8Array> | null
+    )?.getReader()
+    if (reader === undefined) throw new Error("Missing stream")
+    try {
+      const first = await reader.read()
+      expect(new TextDecoder().decode(first.value)).toContain('"id":"first"')
+      controller?.enqueue(
+        encoder.encode(
+          'event: response.output_item.done\ndata: {"type":"response.output_item.done","output_index":0,"item":{"id":"last"}}\n\nevent: response.completed\ndata: {"type":"response.completed","response":{"model":"gpt-6-luna","status":"completed"}}\n\n',
+        ),
+      )
+      controller?.close()
+      let output = ""
+      for (;;) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        output += new TextDecoder().decode(chunk.value)
+      }
+      expect(output).toContain('"id":"first"')
+      expect(output).not.toContain('"id":"last"')
+      expect(output).toContain('"model":"gpt-6-luna"')
+    } finally {
+      await reader.cancel()
+    }
+  })
+
+  test("uses the effective DeepSeek provider and forwards provider-specific fields", async () => {
+    await enableCompaction("deepseek-flash")
+    const config = state.runtimeConfig
+    if (config === undefined) throw new Error("Missing config")
+    config.providers.deepseek.enabled = true
+    config.providers.deepseek.apiKey = "test-key"
+    const payload = {
+      model: "gpt-6-sol",
+      previous_response_id: "stored",
+      tools: [{ type: "web_search" }],
+    }
+    const response = await post("/v1/responses", JSON.stringify(payload), {
+      headers: compactHeaders,
+    })
+    expect(response.status).toBe(200)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.deepseek.com/responses",
+    )
+    expect(JSON.parse(upstreamBody())).toEqual({
+      ...payload,
+      model: "deepseek-flash",
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("Compaction model selection", () => {
+  test.each(["/responses", "/v1/responses"])(
+    "routes marked requests on %s and preserves other fields",
+    async (path) => {
+      await enableCompaction()
+      const payload = {
+        model: "gpt-6-sol",
+        input: [{ type: "reasoning", encrypted_content: "private-ciphertext" }],
+        reasoning: { effort: "medium", context: "all_turns" },
+        stream: true,
+        store: false,
+        prompt_cache_key: "test-cache",
+        extra: { model: "nested-model", text: "日本語" },
+      }
+      const body = JSON.stringify(payload)
+      expect(
+        (
+          await post(path, body, {
+            headers: {
+              ...compactHeaders,
+              "content-length": String(Buffer.byteLength(body)),
+            },
+          })
+        ).status,
+      ).toBe(200)
+      expect(JSON.parse(upstreamBody())).toEqual({
+        ...payload,
+        model: "gpt-6-luna",
+      })
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+      const headers = new Headers(init.headers)
+      expect(headers.get("session-id")).toBe("test-session")
+      expect(headers.get("thread-id")).toBe("test-thread")
+      expect(headers.get("content-length")).toBeNull()
+      expect(infoMock).toHaveBeenCalledWith(
+        "Compaction request sent to gpt-6-sol (gpt-6-luna)",
+      )
+      expect(infoMock).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /^Compaction response received from gpt-6-sol \(gpt-6-luna\): 200 in \d+ms$/,
+        ),
+      )
+      expect(infoMock).toHaveBeenCalledWith("Compaction model routing", {
+        requestedModel: "gpt-6-sol",
+        configuredModel: "gpt-6-luna",
+        upstreamModel: "gpt-6-luna",
+        provider: "copilot",
+        metadataSource: "header",
+      })
+    },
+  )
+
+  test("disabled and legacy config preserve marked request bytes", async () => {
+    const body = '{ "model": "gpt-6-sol", "input": [] }'
+    await post("/v1/responses", body, { headers: compactHeaders })
+    expect(upstreamBody()).toBe(body)
+    state.runtimeConfig = await loadRuntimeConfig({
+      packageRoot: import.meta.dir,
+      env: {},
+    })
+    state.runtimeConfig.compaction.model = "gpt-6-luna"
+    await post("/v1/responses", body, { headers: compactHeaders })
+    expect(upstreamBody(1)).toBe(body)
+  })
+
+  test("resolves target aliases and preserves bytes for a no-op target", async () => {
+    await enableCompaction("codex-auto-review")
+    await post("/v1/responses", '{"model":"gpt-6-sol"}', {
+      headers: compactHeaders,
+    })
+    expect(upstreamModel()).toBe("gpt-6-luna")
+    const body = '{ "model": "gpt-6-luna", "input": [] }'
+    await post("/v1/responses", body, { headers: compactHeaders })
+    expect(upstreamBody(1)).toBe(body)
+  })
+})
+
 describe("Responses header forwarding", () => {
+  test("diagnostics preserve the request body and correlate both boundaries", async () => {
+    state.verbose = true
+    const body =
+      '{"model":"gpt-6-sol","input":[{"type":"function_call_output","output":[{"type":"encrypted_content","encrypted_content":"private-ciphertext"}]}]}'
+    try {
+      await post("/v1/responses", body, {
+        headers: {
+          "x-request-id": "diagnostic-request",
+          session_id: "private-session",
+        },
+      })
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+      expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe(body)
+      const diagnosticCalls = infoMock.mock.calls as unknown as Array<
+        [string, string]
+      >
+      const records = diagnosticCalls
+        .filter(([label]) => label === "Responses diagnostic")
+        .map(([, value]) => JSON.parse(value) as Record<string, unknown>)
+      const request = records.find((entry) => entry.stage === "request")
+      if (request === undefined) throw new Error("Missing request diagnostic")
+      expect(request.requestId).toBe("diagnostic-request")
+      expect(request.incoming).toEqual(request.upstream)
+      expect(
+        records.find((entry) => entry.stage === "upstream-response")?.requestId,
+      ).toBe("diagnostic-request")
+      expect(JSON.stringify(records)).not.toContain("private-ciphertext")
+      expect(JSON.stringify(records)).not.toContain("private-session")
+    } finally {
+      state.verbose = false
+    }
+  })
+
+  test("omits request diagnostics without verbose logging", async () => {
+    await post("/v1/responses")
+    const diagnosticCalls = infoMock.mock.calls as unknown as Array<[string]>
+    expect(
+      diagnosticCalls.some(([label]) => label === "Responses diagnostic"),
+    ).toBe(false)
+  })
+
   test.each(["/responses", "/v1/responses"])(
     "forwards Codex session headers through %s without replacing Copilot credentials",
     async (path) => {
@@ -466,7 +767,7 @@ describe("Responses routes", () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(await new Response(init.body).json()).toEqual({
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       input: "review this",
     })
     expect(infoMock).toHaveBeenCalledWith(
@@ -478,11 +779,11 @@ describe("Responses routes", () => {
       '{"object":"response"}',
     )
     expect(infoMock).toHaveBeenCalledWith(
-      "Request sent to codex-auto-review (gpt-5.6-luna)",
+      "Request sent to codex-auto-review (gpt-6-luna)",
     )
     expect(infoMock).toHaveBeenCalledWith(
       expect.stringMatching(
-        /^Response received from codex-auto-review \(gpt-5\.6-luna\): 200 in \d+ms$/,
+        /^Response received from codex-auto-review \(gpt-6-luna\): 200 in \d+ms$/,
       ),
     )
   })
@@ -578,7 +879,7 @@ describe("Responses routes", () => {
 
   test("logs aliased streaming output without changing SSE framing", async () => {
     const event =
-      'event: response.output_text.delta\ndata: {"delta":"allow","obfuscation":"noise"}\n\nevent: response.completed\ndata: {"copilot_usage":{"total_nano_aiu":42},"response":{"model":"gpt-5.6-luna","status":"completed","instructions":"large policy","output":[{"encrypted_content":"secret","content":[{"text":"{\\"risk_level\\":\\"low\\",\\"outcome\\":\\"allow\\"}"}]}],"usage":{"input_tokens":100,"output_tokens":10}},"type":"response.completed"}\n\n'
+      'event: response.output_text.delta\ndata: {"delta":"allow","obfuscation":"noise"}\n\nevent: response.completed\ndata: {"copilot_usage":{"total_nano_aiu":42},"response":{"model":"gpt-6-luna","status":"completed","instructions":"large policy","output":[{"encrypted_content":"secret","content":[{"text":"{\\"risk_level\\":\\"low\\",\\"outcome\\":\\"allow\\"}"}]}],"usage":{"input_tokens":100,"output_tokens":10}},"type":"response.completed"}\n\n'
     fetchMock.mockImplementationOnce(() =>
       Promise.resolve(
         new Response(event, {
@@ -595,7 +896,7 @@ describe("Responses routes", () => {
     expect(await response.text()).toBe(event)
     expect(infoMock).toHaveBeenCalledWith(
       "codex-auto-review output:",
-      '{"model":"gpt-5.6-luna","status":"completed","output":{"risk_level":"low","outcome":"allow"},"usage":{"input_tokens":100,"output_tokens":10},"copilot_usage":{"total_nano_aiu":42}}',
+      '{"model":"gpt-6-luna","status":"completed","output":{"risk_level":"low","outcome":"allow"},"usage":{"input_tokens":100,"output_tokens":10},"copilot_usage":{"total_nano_aiu":42}}',
     )
   })
 
@@ -671,6 +972,7 @@ describe("Responses routes", () => {
     const previousConfig = state.runtimeConfig
     state.runtimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...defaultProviderConfig().providers,
         copilot: { enabled: true, stripReasoningContentForGpt: true },
@@ -714,6 +1016,7 @@ describe("Responses routes", () => {
     const previousConfig = state.runtimeConfig
     state.runtimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...defaultProviderConfig().providers,
         copilot: { enabled: true, stripReasoningContentForGpt: true },
@@ -737,7 +1040,7 @@ describe("Responses routes", () => {
         model: string
         reasoning: Record<string, unknown>
       }
-      expect(forwarded.model).toBe("gpt-5.6-luna")
+      expect(forwarded.model).toBe("gpt-6-luna")
       expect(forwarded.reasoning).toEqual({ effort: "low", summary: "auto" })
     } finally {
       // eslint-disable-next-line require-atomic-updates
@@ -750,12 +1053,24 @@ describe("Antigravity route forwarding", () => {
   test("routes gemini-3.8-flash-tiered through handler to Antigravity Responses", async () => {
     state.runtimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
-        codex: { authProfile: "default", baseUrl: "https://chatgpt.com/backend-api/codex", enabled: false, models: [], transport: "http" },
+        codex: {
+          authProfile: "default",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+          enabled: false,
+          models: [],
+          transport: "http",
+        },
         copilot: { enabled: true, stripReasoningContentForGpt: true },
-        deepseek: { enabled: false, baseUrl: "https://api.deepseek.com", apiKey: "", models: [] },
+        deepseek: {
+          enabled: false,
+          baseUrl: "https://api.deepseek.com",
+          apiKey: "",
+          models: [],
+        },
         antigravity: { enabled: true },
-      }
+      },
     }
 
     state.antigravityCredentialStore = {
@@ -770,10 +1085,22 @@ describe("Antigravity route forwarding", () => {
     let capturedBody: any = null
     globalThis.fetch = (async (_url: string, init: any) => {
       capturedBody = JSON.parse(init.body)
-      return new Response("data: " + JSON.stringify({ candidates: [{ content: { parts: [{ text: "antigravity response" }] }, finishReason: "STOP" }] }) + "\n\n", {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
-      })
+      return new Response(
+        "data: "
+          + JSON.stringify({
+            candidates: [
+              {
+                content: { parts: [{ text: "antigravity response" }] },
+                finishReason: "STOP",
+              },
+            ],
+          })
+          + "\n\n",
+        {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        },
+      )
     }) as any
 
     try {
@@ -802,10 +1129,22 @@ describe("Antigravity route forwarding", () => {
   test("does not convert the call the client answered with unsupported call", async () => {
     state.runtimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
-        codex: { authProfile: "default", baseUrl: "https://chatgpt.com/backend-api/codex", enabled: false, models: [], transport: "http" },
+        codex: {
+          authProfile: "default",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+          enabled: false,
+          models: [],
+          transport: "http",
+        },
         copilot: { enabled: true, stripReasoningContentForGpt: true },
-        deepseek: { enabled: false, baseUrl: "https://api.deepseek.com", apiKey: "", models: [] },
+        deepseek: {
+          enabled: false,
+          baseUrl: "https://api.deepseek.com",
+          apiKey: "",
+          models: [],
+        },
         antigravity: { enabled: true },
       },
     }
@@ -822,7 +1161,13 @@ describe("Antigravity route forwarding", () => {
     globalThis.fetch = (async (_url: string, init: any) => {
       capturedBody = JSON.parse(init.body)
       return new Response(
-        "data: " + JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }] }) + "\n\n",
+        "data: "
+          + JSON.stringify({
+            candidates: [
+              { content: { parts: [{ text: "ok" }] }, finishReason: "STOP" },
+            ],
+          })
+          + "\n\n",
         { status: 200, headers: { "content-type": "text/event-stream" } },
       )
     }) as any

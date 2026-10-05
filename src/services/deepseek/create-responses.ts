@@ -1,5 +1,7 @@
 import type { RuntimeConfig } from "~/lib/runtime-config"
 
+import { fetchWithRequestDump } from "~/lib/request-dump"
+
 export interface CreateDeepSeekResponsesOptions {
   signal?: AbortSignal
   headers?: Headers
@@ -55,7 +57,7 @@ export async function createDeepSeekResponses(
   if (sessionId) requestHeaders["session-id"] = sessionId
   copyHeader(options.headers, "x-opencode-session", requestHeaders)
 
-  return await fetch(url, {
+  return await fetchWithRequestDump(url, {
     method: "POST",
     headers: requestHeaders,
     body,

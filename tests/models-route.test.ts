@@ -37,6 +37,7 @@ const withCodex = (models: Array<string>): RuntimeConfig => {
   const providers = defaultProviderConfig().providers
   return {
     environment: "test",
+    ...defaultProviderConfig(),
     providers: {
       ...providers,
       codex: {
@@ -76,41 +77,33 @@ afterEach(() => {
 
 describe("model catalogue", () => {
   test("orders Codex, DeepSeek and Copilot including bare models and aliases", async () => {
-    const config = withCodex(["gpt-5.6-luna"])
+    const config = withCodex(["gpt-6-luna"])
     config.providers.deepseek.enabled = true
     state.runtimeConfig = config
     state.models = {
-      data: [copilotModel, { ...copilotModel, id: "gpt-5.6-luna" }],
+      data: [copilotModel, { ...copilotModel, id: "gpt-6-luna" }],
       object: "list",
     }
-    state.publishedModels = publishedFor(
-      config,
-      ["gpt-5.6-luna"],
-      ["gpt-5.6-luna"],
-    )
+    state.publishedModels = publishedFor(config, ["gpt-6-luna"], ["gpt-6-luna"])
     const { data } = await listModels("/v1/models")
     expect(data.map((model) => model.id)).toEqual([
       "----codex----",
-      "gpt-5.6-luna(codex)",
+      "gpt-6-luna(codex)",
       "----deepseek----",
       "deepseek-flash",
       "deepseek-v4-pro",
       "----copilot----",
-      "gpt-5.6-luna(copilot)",
+      "gpt-6-luna(copilot)",
       "gpt-copilot",
       "codex-auto-review",
     ])
   })
   test("lists a configured DeepSeek id that keeps no deepseek- prefix", async () => {
-    const config = withCodex(["gpt-5.6-luna"])
+    const config = withCodex(["gpt-6-luna"])
     config.providers.deepseek.enabled = true
     config.providers.deepseek.models = ["zen-go-lite"]
     state.runtimeConfig = config
-    state.publishedModels = publishedFor(
-      config,
-      ["gpt-5.6-luna"],
-      ["gpt-5.6-luna"],
-    )
+    state.publishedModels = publishedFor(config, ["gpt-6-luna"], ["gpt-6-luna"])
 
     const { data } = await listModels("/v1/models")
     const ids = data.map((model) => String(model.id))
@@ -118,24 +111,20 @@ describe("model catalogue", () => {
     expect(ids.indexOf("zen-go-lite")).toBe(ids.indexOf("----deepseek----") + 1)
   })
   test("publishes one suffixed entry per source and hides the bare id", async () => {
-    const config = withCodex(["gpt-5.6-luna"])
+    const config = withCodex(["gpt-6-luna"])
     state.models = {
-      data: [copilotModel, { ...copilotModel, id: "gpt-5.6-luna" }],
+      data: [copilotModel, { ...copilotModel, id: "gpt-6-luna" }],
       object: "list",
     }
     state.runtimeConfig = config
-    state.publishedModels = publishedFor(
-      config,
-      ["gpt-5.6-luna"],
-      ["gpt-5.6-luna"],
-    )
+    state.publishedModels = publishedFor(config, ["gpt-6-luna"], ["gpt-6-luna"])
 
     const { data } = await listModels("/models")
     const ids = data.map((model) => model.id)
 
-    expect(ids).toContain("gpt-5.6-luna(copilot)")
-    expect(ids).toContain("gpt-5.6-luna(codex)")
-    expect(ids).not.toContain("gpt-5.6-luna")
+    expect(ids).toContain("gpt-6-luna(copilot)")
+    expect(ids).toContain("gpt-6-luna(codex)")
+    expect(ids).not.toContain("gpt-6-luna")
     // The unrelated Copilot model and the explicit alias stay reachable.
     expect(ids).toContain("gpt-copilot")
     expect(ids).toContain("codex-auto-review")
@@ -145,17 +134,17 @@ describe("model catalogue", () => {
     ).toBe(false)
     expect(ids.map(String).filter((id) => id === "codex-auto-review")) //
       .toHaveLength(1)
-    expect(data.find((model) => model.id === "gpt-5.6-luna(codex)")) //
+    expect(data.find((model) => model.id === "gpt-6-luna(codex)")) //
       .toMatchObject({
         owned_by: "codex",
-        display_name: "gpt-5.6-luna(codex)",
+        display_name: "gpt-6-luna(codex)",
       })
-    expect(data.find((model) => model.id === "gpt-5.6-luna(copilot)")) //
+    expect(data.find((model) => model.id === "gpt-6-luna(copilot)")) //
       .toMatchObject({ owned_by: "copilot" })
   })
 
   test("serves the same catalogue with and without the /v1 prefix", async () => {
-    state.runtimeConfig = withCodex(["gpt-5.6-luna"])
+    state.runtimeConfig = withCodex(["gpt-6-luna"])
 
     const plain = await listModels("/models")
     const versioned = await listModels("/v1/models")
@@ -166,6 +155,7 @@ describe("model catalogue", () => {
   test("does not publish Codex models while the provider is disabled", async () => {
     const config: RuntimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: defaultProviderConfig().providers,
     }
     state.runtimeConfig = config
@@ -189,6 +179,7 @@ describe("model catalogue", () => {
     const providers = defaultProviderConfig().providers
     state.runtimeConfig = {
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...providers,
         deepseek: { ...providers.deepseek, enabled: true },

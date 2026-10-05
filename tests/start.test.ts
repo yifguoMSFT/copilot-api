@@ -26,6 +26,7 @@ const configWith = (
   providers: Partial<RuntimeConfig["providers"]>,
 ): RuntimeConfig => ({
   environment: "test",
+  ...defaultProviderConfig(),
   providers: { ...defaultProviderConfig().providers, ...providers },
 })
 

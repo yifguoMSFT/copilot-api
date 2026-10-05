@@ -101,7 +101,7 @@ DeepSeek 模型列表默认包含接入文档给出的 `deepseek-flash`、`deeps
 
 ### 4.1 文件选择与覆盖顺序
 
-配置文件定位：`start --config <path>` > `COPILOT_API_CONFIG` > 当前工作目录的 `config.json`。前两种显式指定文件不存在则启动失败；默认文件不存在则使用默认配置。只解析被选中的一份文件，不扫描父目录。
+配置文件定位：`start --config <path>` > `COPILOT_API_CONFIG` > 包根目录的 `config.json`。前两种显式指定文件不存在则启动失败；默认文件不存在则使用默认配置。只解析被选中的一份文件，不扫描父目录或隐式读取当前仓库配置。
 
 环境选择：`start --env <name>` > `COPILOT_API_ENV` > `default`。显式选择不存在的环境报错；默认 `default` 可没有覆盖段。`NODE_ENV` 不选择本项目环境，避免 `bun run start` 的 production 值意外切换目录。
 
@@ -128,17 +128,34 @@ DeepSeek 模型列表默认包含接入文档给出的 `deepseek-flash`、`deeps
         "apiKey": "replace-with-your-deepseek-api-key",
         "models": ["deepseek-flash", "deepseek-v4-pro"]
       }
+    },
+    "catalog": {
+      "enabled": true,
+      "customFiles": ["./codex-models-custom.json"],
+      "outputFile": "./generated/codex-models.json"
     }
   },
   "environments": {
     "windows-dev": {
-      "providers": { "deepseek": { "enabled": true } }
+      "providers": { "deepseek": { "enabled": true } },
+      "catalog": {
+        "customFiles": ["I:/Cache/workshop/copilot-api/codex-models-custom.json"],
+        "outputFile": "I:/Cache/workshop/copilot-api/codex-models.json"
+      }
     },
     "linux-service": {
-      "providers": { "deepseek": { "enabled": true } }
+      "providers": { "deepseek": { "enabled": true } },
+      "catalog": {
+        "customFiles": ["/etc/copilot-api/codex-models-custom.json"],
+        "outputFile": "/var/lib/copilot-api/codex-models.json"
+      }
     },
     "docker": {
-      "providers": { "deepseek": { "enabled": true } }
+      "providers": { "deepseek": { "enabled": true } },
+      "catalog": {
+        "customFiles": ["/config/codex-models-custom.json"],
+        "outputFile": "/data/codex-models.json"
+      }
     }
   }
 }
@@ -155,27 +172,37 @@ DeepSeek 模型列表默认包含接入文档给出的 `deepseek-flash`、`deeps
 | `COPILOT_API_COPILOT_ENABLED` | 开关 Copilot |
 | `COPILOT_API_DEEPSEEK_ENABLED` | 开关 DeepSeek |
 | `COPILOT_API_DEEPSEEK_BASE_URL` | 覆盖 DeepSeek endpoint |
+| `COPILOT_API_CATALOG_ENABLED` | 开关模型目录刷新 |
+| `COPILOT_API_CATALOG_CUSTOM_FILES` | JSON 字符串数组，覆盖所有 customFiles |
+| `COPILOT_API_CATALOG_OUTPUT_FILE` | 覆盖生成目录文件路径 |
 
-布尔值仅接受 `true`/`false`；不使用 `Boolean("false")`。不自动读取 `.env`；不同运行时的 dotenv 行为不能成为配置契约。
+布尔值仅接受 `true`/`false`；不使用 `Boolean("false")`。文件列表采用 JSON 数组，避免 Windows 盘符中的冒号与路径分隔符冲突。不自动读取 `.env`；不同运行时的 dotenv 行为不能成为配置契约。
 
 ### 4.3 路径规则
 
 - CLI 或环境变量指定的配置文件相对路径，仅在启动时相对 cwd 转成绝对路径。
-- 模型目录生成独立于 `config.json`：始终读取工作目录的 `codex-models-custom.json`，写入同目录的 `codex-models.json`。
-- 临时文件与输出位于同目录，写完后 rename 替换，保留失败清理和旧输出不损坏的保证。
-- 启动日志不输出密钥或完整运行时配置。
+- 配置文件中的所有相对路径，以该配置文件所在目录为基准；环境覆盖段也一样。
+- 环境变量覆盖的 customFiles/outputFile 要求绝对路径，避免配置来源影响基准目录。
+- 不展开路径中的 `$VAR`、`${VAR}`、`%VAR%` 或 `~`。需要 home 路径时由部署工具生成绝对路径。
+- 无配置文件时：customFiles 默认空数组，outputFile 默认为 包根目录的 `codex-models.json`，保留当前 APP_DIR 的跨平台计算方法。GitHub token 存储位置不迁移。
+- 输入文件必须存在、可读且 JSON 合法；显式输入错误启动失败。输出文件不能与任何输入文件或配置文件指向同一位置，校验规范化路径、Windows 大小写及已有符号链接解析后的路径。
+- 自动创建输出父目录。临时文件与输出位于同目录，使用唯一名，写完后 rename 替换。保留失败清理和旧输出不损坏的保证。
+- 两个进程不得配置同一个输出文件作为受支持部署方式；不同环境使用不同输出或仅一个生成进程。暂不增加跨进程锁。
+- 启动日志输出最终环境名、配置来源、输入和输出绝对路径，供用户定位；不输出密钥或完整运行时配置。
 
 ## 5. 模型目录与模型发现
 
 ### 5.1 元数据来源及合并
 
-每次启动都调用 `refreshCodexModels(process.cwd())`，与 provider 配置是否存在或是否启用无关。
+将 `refreshCodexModels(directory?)` 改为接受显式配置对象，不再在函数参数默认值里计算部署路径。解析配置、校验输入与拉取远程目录分开处理。
 
-合并顺序：上游 Codex 模型目录 → `codex-models-custom.json`。相同 slug 后者胜出，保留上游其他顶层元数据。
+合并顺序：上游 Codex 模型目录 → 启用的 provider 随包元数据 → customFiles 按数组顺序覆盖。相同 slug 后者胜出，每个来源内部出现重复 slug 报错，保留上游其他顶层元数据。
 
 新增随包 DeepSeek 元数据资源，例如 `src/providers/deepseek/models.json`，构建时嵌入或明确复制至 `dist`，验证发布包和 Docker 中无需源码目录也可读取。内容依据官方 Codex 接入样例，而非复制 GPT 的工具格式、上下文或推理能力。文件注释不能放入 JSON；来源 URL、核对日期及能力变更记录放入相邻 Markdown。
 
-DeepSeek 的完整 Codex 元数据保存在 `codex-models-custom.json`；是否显示模型与 provider 是否启用彼此独立。目录存在不等于路由已启用或账号有调用权限。
+只有启用且列入 provider.models 的 DeepSeek 条目进入最终目录。最终合并后再次过滤 DeepSeek 保留命名空间，避免 customFiles 将禁用或未配置的 DeepSeek 模型重新暴露。其他 Copilot/上游模型仍按现有策略保留；目录存在不等于账号有调用权限。
+
+每个启用的 DeepSeek 模型必须有完整可供 Codex 使用的元数据；新增 ID 可以通过 customFiles 提供，但不能只添加路由名而缺失目录定义。catalog.enabled=false 时仅跳过目录生成，管理员负责外部目录及其一致性。
 
 ### 5.2 失败及离线策略
 

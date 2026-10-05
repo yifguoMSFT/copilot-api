@@ -17,6 +17,7 @@ worktrees
 *kanban*
 .gocache
 .tmp-codex
+/logs/
 *.kanban.*
 kanban-archive
 

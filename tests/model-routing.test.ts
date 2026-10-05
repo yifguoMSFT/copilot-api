@@ -13,6 +13,7 @@ import { defaultProviderConfig } from "../src/lib/runtime-config"
 
 const baseConfig = (): RuntimeConfig => ({
   environment: "test",
+  compaction: { enabled: false },
   providers: {
     ...defaultProviderConfig().providers,
     copilot: { enabled: true, stripReasoningContentForGpt: true },
@@ -23,6 +24,12 @@ const baseConfig = (): RuntimeConfig => ({
       models: ["deepseek-flash"],
     },
   },
+  catalog: {
+    enabled: false,
+    customFiles: [],
+    disabledModels: [],
+    outputFile: "models.json",
+  },
 })
 
 test.each(["----codex----", "----deepseek----", "----copilot----"])(
@@ -32,7 +39,7 @@ test.each(["----codex----", "----deepseek----", "----copilot----"])(
       provider: "copilot",
       reasoningEffort: "low",
       requestedModel: id,
-      upstreamModel: "gpt-5.6-luna",
+      upstreamModel: "gpt-6-luna",
     })
   },
 )
@@ -54,7 +61,7 @@ test.each([true, false])(
     expect(resolveModelRoute("codex-auto-review", config)).toEqual({
       provider: "copilot",
       requestedModel: "codex-auto-review",
-      upstreamModel: "gpt-5.6-luna",
+      upstreamModel: "gpt-6-luna",
     })
   },
 )
@@ -235,6 +242,7 @@ test("rejects a duplicate or suffixed configured model id", () => {
   expect(() =>
     assertModelRoutingConflicts({
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...base,
         codex: codexConfig({ models: ["gpt-5.5", "gpt-5.5"] }),
@@ -245,6 +253,7 @@ test("rejects a duplicate or suffixed configured model id", () => {
   expect(() =>
     assertModelRoutingConflicts({
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...base,
         codex: codexConfig({ models: ["gpt-5.5(codex)"] }),
@@ -259,6 +268,7 @@ test("allows a base model both providers can serve", () => {
   expect(() =>
     assertModelRoutingConflicts({
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...base,
         codex: codexConfig({ models: ["gpt-5.6-luna"] }),
@@ -269,6 +279,7 @@ test("allows a base model both providers can serve", () => {
   expect(() =>
     assertModelRoutingConflicts({
       environment: "test",
+      ...defaultProviderConfig(),
       providers: {
         ...base,
         codex: codexConfig({ enabled: false, models: ["deepseek-flash"] }),
@@ -291,15 +302,21 @@ test("rejects gemini-3.8-flash-tiered when antigravity provider is disabled", ()
   const config = baseConfig()
   config.providers.antigravity = { enabled: false }
   expect(() => resolveModelRoute("gemini-3.8-flash-tiered", config)).toThrow(
-    "Antigravity provider is disabled for model: gemini-3.8-flash-tiered"
+    "Antigravity provider is disabled for model: gemini-3.8-flash-tiered",
   )
 })
 
 test("resolveAntigravityUpstreamModel maps low, medium, high to exact upstream model with medium default", async () => {
-  const { resolveAntigravityUpstreamModel } = await import("../src/services/antigravity/models")
+  const { resolveAntigravityUpstreamModel } = await import(
+    "../src/services/antigravity/models"
+  )
   expect(resolveAntigravityUpstreamModel("low")).toBe("gemini-3.8-flash-low")
-  expect(resolveAntigravityUpstreamModel("medium")).toBe("gemini-3.8-flash-medium")
+  expect(resolveAntigravityUpstreamModel("medium")).toBe(
+    "gemini-3.8-flash-medium",
+  )
   expect(resolveAntigravityUpstreamModel("high")).toBe("gemini-3.8-flash-high")
   expect(resolveAntigravityUpstreamModel()).toBe("gemini-3.8-flash-medium")
-  expect(resolveAntigravityUpstreamModel("unrecognized")).toBe("gemini-3.8-flash-medium")
+  expect(resolveAntigravityUpstreamModel("unrecognized")).toBe(
+    "gemini-3.8-flash-medium",
+  )
 })

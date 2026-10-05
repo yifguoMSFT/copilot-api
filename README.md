@@ -37,6 +37,57 @@ The proxy reuses the GitHub credentials saved during installation. Keep the term
 
 The installer does not start a background service. Run `copilot-api start` whenever you need the proxy; press `Ctrl+C` to stop it.
 
+For queryable request capture, start with `copilot-api start --dump-requests`. This appends complete incoming and upstream API request bodies and credential-redacted headers to `logs/requests.sqlite` in the working directory. See [request dump queries and capture scope](docs/troubleshoot/request-dumps.md). This flag works independently of `--verbose`.
+
+## Compaction model routing
+
+Compaction routing is disabled by default. To send Codex compaction requests to a specific model, save this as `config.json`:
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "compaction": {
+      "enabled": false,
+      "model": "gpt-6-luna"
+    }
+  },
+  "environments": {
+    "luna-compaction": {
+      "compaction": { "enabled": true }
+    }
+  }
+}
+```
+
+After rebuilding, start with the named environment:
+
+```powershell
+bun run build
+copilot-api start --env luna-compaction
+```
+
+The proxy automatically loads `config.json` from the package folder (`dist\..` for the installed CLI), alongside the default `codex-models.json`, regardless of the terminal's working directory. Save the configuration in that folder. Symlinked commands resolve to the actual package folder. `--config` takes precedence over `COPILOT_API_CONFIG`, which takes precedence over automatic discovery; explicit relative paths resolve from the working directory. A missing default file uses built-in settings; an explicitly selected missing file or an invalid/unreadable file fails startup. Configuration changes require restarting the proxy. Starting without the named environment keeps the example disabled. `compaction.model` must be a nonblank model identifier when enabled; named environments inherit unspecified fields from defaults.
+
+Only POST `/responses` and `/v1/responses` requests explicitly marked `request_kind: "compaction"` in JSON-valued `x-codex-turn-metadata` are overridden. Body `client_metadata["x-codex-turn-metadata"]` is used only when the header is absent. Prompt text does not trigger routing. Ordinary turns keep their requested model; compaction changes only the top-level request model through existing alias/provider routing. Upstream model errors are surfaced without fallback. Dedicated `/responses/compact` and WebSocket requests are outside this feature. Cross-model compaction and subsequent continuation must be verified for the chosen models and history; routing does not remove encrypted state or change reasoning settings.
+
+## Exclude models from the Codex catalog
+
+Set `defaults.catalog.disabledModels` in `config.json` to omit exact model slugs from `codex-models.json`:
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "catalog": {
+      "disabledModels": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]
+    }
+  }
+}
+```
+
+Merge this setting with your other configuration. After rebuilding and restarting the proxy with this config and catalog generation enabled, restart Codex to load the filtered catalog. The installer applies the same exclusions. Filtering applies after upstream, cached, DeepSeek, and custom models are merged. An environment's list replaces the default list; `[]` clears it. Matching is exact and case-sensitive, so newly introduced GPT-5 slugs need to be added explicitly. Exclusions affect catalog visibility; explicit API requests and routing aliases can still use those models.
+
 ## Codex configuration
 
 The installer uses `%USERPROFILE%\.codex\config.toml`, or `%CODEX_HOME%\config.toml` when `CODEX_HOME` is set. It creates both the folder and file if they do not exist.

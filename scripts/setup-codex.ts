@@ -78,13 +78,14 @@ export async function setupCodex(
 ): Promise<void> {
   const catalogPath = path.join(root, "codex-models.json")
   const configPath = path.join(codexHome, "config.toml")
-  const runtime = await loadRuntimeConfig({ cwd: root })
+  const runtime = await loadRuntimeConfig({ cwd: root, packageRoot: root })
   const temporary = `${catalogPath}.${process.pid}.install`
   try {
     await refreshCodexModels({
       outputFile: temporary,
       upstreamCacheFile: path.join(root, "codex-models-upstream.json"),
-      customFiles: [path.join(root, "codex-models-custom.json")],
+      customFiles: runtime.catalog.customFiles,
+      disabledModels: runtime.catalog.disabledModels,
       deepSeekModels:
         runtime.providers.deepseek.enabled ?
           runtime.providers.deepseek.models
@@ -98,7 +99,7 @@ export async function setupCodex(
     }
     if (!catalog.models?.length)
       throw new Error(
-        "Catalog is empty; check network access and run the installer again",
+        "Catalog is empty; check model exclusions and network access, then run the installer again",
       )
     await fs.rename(temporary, catalogPath)
   } finally {
