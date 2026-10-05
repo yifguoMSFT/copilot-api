@@ -1,0 +1,183 @@
+{
+  "created_at": "2026-10-05T02:19:13Z",
+  "kind": "kanban-blueprint",
+  "tasks": [
+    {
+      "created_at": "2026-10-05T02:19:26Z",
+      "created_by": "user",
+      "id": "commit_compaction_routing_baseline",
+      "parents": [],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "git"
+      ],
+      "task_markdown": "Record branch and HEAD. Inspect staged, unstaged, and untracked files. Baseline commit scope: docs/COMPACTION_MODEL_ROUTING_IMPLEMENTATION_PLAN.md and docs/compaction-model-routing.kanban.json plus existing changes demonstrably belonging to this feature. Preserve and identify unrelated or excluded changes; exclude secrets, private dumps, ignored/generated caches, and execution bookkeeping. Commit eligible baseline work before implementation. Do not push, amend, or switch branches. Read [[COMPACTION_MODEL_ROUTING_IMPLEMENTATION_PLAN.md]].",
+      "title": "Commit compaction routing baseline",
+      "updated_at": "2026-10-05T02:19:26Z",
+      "verification": "Inspect git status --short, git diff --stat, git diff --cached --stat, and untracked files in scope. If eligible changes exist, make a successful commit and record before/after HEAD, git log -1, and git show --stat HEAD in execution context. Otherwise record observed checks, excluded files, and 'Skipped: no changes to commit'; never create an empty commit. Git errors are not a skip.",
+      "workspace_hint": "E:\\workshop\\copilot-api"
+    },
+    {
+      "created_at": "2026-10-05T02:20:00Z",
+      "created_by": "user",
+      "id": "add_opt-in_compaction_model_configuration",
+      "parents": [
+        "commit_compaction_routing_baseline"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "configuration",
+        "tests"
+      ],
+      "task_markdown": "Implement the configuration contract in [[COMPACTION_MODEL_ROUTING_IMPLEMENTATION_PLAN.md]]. Extend src/lib/runtime-config.ts schema, types, defaults, and field-level environment merging with compaction.enabled=false and optional model. Require a trimmed nonblank model after merging when enabled, validate configured provider routing after provider environment overrides, update typed fixtures and legacy fallback. Add no new CLI flag or feature environment variable. Add runtime-config tests.",
+      "title": "Add opt-in compaction model configuration",
+      "updated_at": "2026-10-05T02:20:00Z",
+      "verification": "Run bun test tests/runtime-config.test.ts and bun run typecheck. Prove old/absent config stays disabled, model-only config does not enable, environment inheritance/disable/replace works, invalid keys/types/blank models and enabled missing model fail, and disabled providers/unknown DeepSeek targets fail when enabled.",
+      "workspace_hint": "E:\\workshop\\copilot-api"
+    },
+    {
+      "created_at": "2026-10-05T02:20:05Z",
+      "created_by": "user",
+      "id": "detect_explicit_codex_compaction_metadata",
+      "parents": [
+        "commit_compaction_routing_baseline"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "routing",
+        "tests"
+      ],
+      "task_markdown": "Implement a pure defensive helper in src/lib/compaction-routing.ts following [[COMPACTION_MODEL_ROUTING_IMPLEMENTATION_PLAN.md]]. Parse authoritative x-codex-turn-metadata header; use serialized client_metadata field only when header is absent. Match exact request_kind=compaction. Malformed optional metadata means no override. Ignore prompt text and historical compaction content. Add synthetic fixtures and tests in tests/compaction-routing.test.ts; never commit private capture bodies.",
+      "title": "Detect explicit Codex compaction metadata",
+      "updated_at": "2026-10-05T02:20:05Z",
+      "verification": "Run bun test tests/compaction-routing.test.ts. Cover captured/manual and automatic markers, header/body fallback, conflicting or malformed header precedence, absent/null/array/non-string metadata, a compaction object without request_kind, and historical/final compaction prompt text without a marker.",
+      "workspace_hint": "E:\\workshop\\copilot-api"
+    },
+    {
+      "created_at": "2026-10-05T02:20:32Z",
+      "created_by": "user",
+      "id": "route_compaction_requests_to_configured_model",
+      "parents": [
+        "add_opt-in_compaction_model_configuration",
+        "detect_explicit_codex_compaction_metadata"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "routing",
+        "observability"
+      ],
+      "task_markdown": "Integrate the override in src/routes/responses/handler.ts on both existing POST Responses paths per [[COMPACTION_MODEL_ROUTING_IMPLEMENTATION_PLAN.md]]. Select target before alias/provider routing; preserve existing malformed-model behavior and effective-provider validation. Rewrite only top-level model, retaining original bytes for no-op targets and original body for diagnostics. Preserve session/thread headers, encrypted values and streaming. Log original/configured/resolved model, provider and metadata source without private content. Do not mutate session/global model state, silently retry/fallback, or add dedicated compact/WebSocket support.",
+      "title": "Route compaction requests to configured model",
+      "updated_at": "2026-10-05T02:20:32Z",
+      "verification": "Focused route tests and typecheck pass. Mock upstream proves both paths use the configured resolved target; disabled/normal requests retain behavior. Verify no stale content length, unchanged non-model payload values/ciphertext, byte-preserving no-op targets, provider validation and accurate destination logging.",
+      "workspace_hint": "E:\\workshop\\copilot-api"
+    },
+    {
+      "created_at": "2026-10-05T02:20:35Z",
+      "created_by": "user",
+      "id": "verify_routing_preservation_isolation_and_dumps",
+      "parents": [
+        "route_compaction_requests_to_configured_model"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "tests",
+        "validation"
+      ],
+      "task_markdown": "Complete tests/responses-route.test.ts and tests/request-dump.test.ts against [[COMPACTION_MODEL_ROUTING_IMPLEMENTATION_PLAN.md]]. Use synthetic history/ciphertext. Cover aliases/providers, malformed requests, sequential/concurrent isolation, upstream errors without retry, streamed SSE with existing normalizer and unchanged response model fields, linked incoming/upstream dumps, disabled and no-op paths. Reuse mock upstream and state cleanup.",
+      "title": "Verify routing preservation isolation and dumps",
+      "updated_at": "2026-10-05T02:20:35Z",
+      "verification": "bun test tests/runtime-config.test.ts tests/compaction-routing.test.ts tests/responses-route.test.ts tests/request-dump.test.ts passes. Deep-compare payloads excluding only top-level model; verify session/thread headers, original/effective dump models and shared trace. Never commit private request captures.",
+      "workspace_hint": "E:\\workshop\\copilot-api"
+    },
+    {
+      "created_at": "2026-10-05T02:20:38Z",
+      "created_by": "user",
+      "id": "document_compaction_configuration_and_validation_report",
+      "parents": [
+        "verify_routing_preservation_isolation_and_dumps"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "docs"
+      ],
+      "task_markdown": "Update README.md with opt-in config.json example, --config/--env usage and restart semantics; update [[troubleshoot/request-dumps.md]] with expected model/hash differences. Create [[COMPACTION_MODEL_ROUTING_VALIDATION_REPORT.md]] describing final behavior, automated results, scope and pending live checks; update it in later validation tasks. Follow [[COMPACTION_MODEL_ROUTING_IMPLEMENTATION_PLAN.md]]. Do not infer stream completion or continuation from HTTP 200.",
+      "title": "Document compaction configuration and validation report",
+      "updated_at": "2026-10-05T02:20:38Z",
+      "verification": "Examples match schema and flags. Report records automated evidence, disabled default, preservation, unsupported dedicated/WebSocket scope, and pending encrypted cross-model continuation. No secrets or private dumps included.",
+      "workspace_hint": "E:\\workshop\\copilot-api"
+    },
+    {
+      "created_at": "2026-10-05T02:20:41Z",
+      "created_by": "user",
+      "id": "run_completion_checks_and_inspect_feature_diff",
+      "parents": [
+        "document_compaction_configuration_and_validation_report"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "validation",
+        "review"
+      ],
+      "task_markdown": "Run completion checks from [[COMPACTION_MODEL_ROUTING_IMPLEMENTATION_PLAN.md]]. Review feature diff for scope, config/metadata precedence, stream buffering, ciphertext changes, incorrect logs, stale content length and global/session state mutation. Fix failures and rerun affected checks. Update [[COMPACTION_MODEL_ROUTING_VALIDATION_REPORT.md]]. This is agent-performed objective review, not a human approval gate.",
+      "title": "Run completion checks and inspect feature diff",
+      "updated_at": "2026-10-05T02:20:41Z",
+      "verification": "bun run typecheck, bun run lint, bun test, and bun run build pass. Record commands/results and review findings/resolutions. Environment limitations cannot count as passing checks.",
+      "workspace_hint": "E:\\workshop\\copilot-api"
+    },
+    {
+      "created_at": "2026-10-05T02:20:44Z",
+      "created_by": "user",
+      "id": "verify_live_luna_compaction_and_original_model_resume",
+      "parents": [
+        "run_completion_checks_and_inspect_feature_diff"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "live-validation"
+      ],
+      "task_markdown": "Follow live acceptance in [[COMPACTION_MODEL_ROUTING_IMPLEMENTATION_PLAN.md]] using the local proxy and controlled Codex sessions only. Do not touch the unrelated ADC board or execute unrelated agent work. Verify disabled normal/manual compaction, enable gpt-6-luna and verify Sol/Astra manual compaction plus original-model follow-up using compacted context, then disable and verify restoration. Compare linked dumps for marker, effective model, fields and headers. Capture automatic compaction if practical, otherwise label unverified. Preserve/restore local config/process setup. If restarting user's proxy or creating/steering test chats lacks execution-time authorization, request that specific authorization and block affected checks. Update [[COMPACTION_MODEL_ROUTING_VALIDATION_REPORT.md]].",
+      "title": "Verify live Luna compaction and original model resume",
+      "updated_at": "2026-10-05T02:20:44Z",
+      "verification": "Manual compaction completes with a summary for Sol and Astra; ordinary follow-up uses original model and succeeds. Disabled routes original model. Dump evidence shows Luna target and preserved non-model fields/headers. Record stream completion, continuation, rollback and separate automatic coverage. HTTP headers alone cannot pass; required blocked live checks remain incomplete.",
+      "workspace_hint": "E:\\workshop\\copilot-api"
+    },
+    {
+      "created_at": "2026-10-05T02:20:47Z",
+      "created_by": "user",
+      "id": "commit_completed_compaction_routing_feature",
+      "parents": [
+        "verify_live_luna_compaction_and_original_model_resume"
+      ],
+      "priority": null,
+      "review_required": false,
+      "status": "todo",
+      "tags": [
+        "git"
+      ],
+      "task_markdown": "After predecessor validations commit only this feature's code/tests, README/troubleshoot updates, [[COMPACTION_MODEL_ROUTING_IMPLEMENTATION_PLAN.md]], [[COMPACTION_MODEL_ROUTING_VALIDATION_REPORT.md]] and this blueprint in E:/workshop/copilot-api. Inspect staged/unstaged/untracked files and preserve unrelated work. Exclude secrets, private dumps, ignored/generated caches and execution bookkeeping. Do not push, amend or switch branches. Record resulting hash or skip evidence only in execution context; do not insert the report's own commit hash into the tracked report.",
+      "title": "Commit completed compaction routing feature",
+      "updated_at": "2026-10-05T02:20:47Z",
+      "verification": "Inspect git status --short, git diff --stat, git diff --cached --stat and untracked files in scope. If eligible changes exist make an actual successful commit; record before/after HEAD, git log -1 and git show --stat HEAD. Otherwise record observed checks, excluded files and 'Skipped: no changes to commit'; no empty commits. Git errors/failed hooks are not skips. No required check remains pending.",
+      "workspace_hint": "E:\\workshop\\copilot-api"
+    }
+  ],
+  "updated_at": "2026-10-05T02:20:47Z",
+  "version": 1
+}
