@@ -45,6 +45,7 @@ export async function handleResponse(c: Context): Promise<Response> {
     requestedModel,
     upstreamModel,
     provider,
+    isCompaction,
   } = resolveResponseModel(body, c.req.raw.headers)
   const shouldLogContent =
     requestedModel !== undefined && isModelAlias(requestedModel)
@@ -70,7 +71,9 @@ export async function handleResponse(c: Context): Promise<Response> {
   }
 
   const modelLabel = formatModelLabel(requestedModel, upstreamModel)
-  consola.info(`Request sent to ${modelLabel}`)
+  consola.info(
+    `${isCompaction ? "Compaction request" : "Request"} sent to ${modelLabel}`,
+  )
   let upstream: Response
   if (provider === "deepseek") {
     const deepSeekConfig = state.runtimeConfig?.providers.deepseek
@@ -89,7 +92,7 @@ export async function handleResponse(c: Context): Promise<Response> {
     })
   }
   consola.info(
-    `Response received from ${modelLabel}: ${upstream.status} in ${Date.now() - startedAt}ms`,
+    `${isCompaction ? "Compaction response" : "Response"} received from ${modelLabel}: ${upstream.status} in ${Date.now() - startedAt}ms`,
   )
   if (shouldLogContent) logResponseOutput(requestedModel, upstream.clone())
   // Fetch decodes compressed bodies; streaming normalization can change their size.
@@ -149,14 +152,17 @@ const resolveResponseModel = (
   body: ArrayBuffer | string
   requestedModel?: string
   upstreamModel?: string
+  isCompaction: boolean
   provider: "copilot" | "deepseek"
 } => {
   const text = new TextDecoder().decode(body)
 
   try {
     const payload = JSON.parse(text) as Record<string, unknown>
+    const metadataSource = compactionMetadataSource(headers, payload)
+    const isCompaction = metadataSource !== undefined
     if (payload.model === undefined) {
-      return { body, provider: "copilot" }
+      return { body, provider: "copilot", isCompaction }
     }
     if (typeof payload.model !== "string" || payload.model.length === 0) {
       throw new Error("Responses model must be a non-empty string")
@@ -180,18 +186,16 @@ const resolveResponseModel = (
         outputFile: "",
       },
     }
-    const metadataSource =
-      config.compaction.enabled ?
-        compactionMetadataSource(headers, payload)
-      : undefined
     const target =
-      metadataSource === undefined ? payload.model : config.compaction.model
+      config.compaction.enabled && isCompaction ?
+        config.compaction.model
+      : payload.model
     if (target === undefined) {
       throw new Error("compaction.model is required when compaction is enabled")
     }
     const route = resolveModelRoute(target, config)
     if (route.provider === "deepseek") validateDeepSeekPayload(payload)
-    if (metadataSource !== undefined) {
+    if (config.compaction.enabled && isCompaction) {
       consola.info("Compaction model routing", {
         requestedModel: payload.model,
         configuredModel: target,
@@ -204,6 +208,7 @@ const resolveResponseModel = (
     if (route.upstreamModel === payload.model) {
       return {
         body,
+        isCompaction,
         requestedModel: payload.model,
         upstreamModel: route.upstreamModel,
         provider: route.provider,
@@ -212,6 +217,7 @@ const resolveResponseModel = (
 
     return {
       body: JSON.stringify({ ...payload, model: route.upstreamModel }),
+      isCompaction,
       requestedModel: payload.model,
       upstreamModel: route.upstreamModel,
       provider: route.provider,

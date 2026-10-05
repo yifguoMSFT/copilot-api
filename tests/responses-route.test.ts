@@ -71,7 +71,7 @@ const compactHeaders = {
 
 async function enableCompaction(model = "gpt-6-luna") {
   state.runtimeConfig = await loadRuntimeConfig({
-    cwd: import.meta.dir,
+    packageRoot: import.meta.dir,
     env: {},
   })
   state.runtimeConfig.compaction = { enabled: true, model }
@@ -284,7 +284,12 @@ describe("Compaction model selection", () => {
       expect(headers.get("thread-id")).toBe("test-thread")
       expect(headers.get("content-length")).toBeNull()
       expect(infoMock).toHaveBeenCalledWith(
-        "Request sent to gpt-6-sol (gpt-6-luna)",
+        "Compaction request sent to gpt-6-sol (gpt-6-luna)",
+      )
+      expect(infoMock).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /^Compaction response received from gpt-6-sol \(gpt-6-luna\): 200 in \d+ms$/,
+        ),
       )
       expect(infoMock).toHaveBeenCalledWith("Compaction model routing", {
         requestedModel: "gpt-6-sol",
@@ -301,7 +306,7 @@ describe("Compaction model selection", () => {
     await post("/v1/responses", body, { headers: compactHeaders })
     expect(upstreamBody()).toBe(body)
     state.runtimeConfig = await loadRuntimeConfig({
-      cwd: import.meta.dir,
+      packageRoot: import.meta.dir,
       env: {},
     })
     state.runtimeConfig.compaction.model = "gpt-6-luna"

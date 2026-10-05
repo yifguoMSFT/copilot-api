@@ -19,6 +19,7 @@ Dedicated compact endpoints and WebSockets are outside scope. Target compatibili
 - Complete suite: 144 passed, 0 failed, 435 assertions across 15 files; run with sandbox escalation for existing subprocess fixtures.
 - Diff review checked configuration default/merge order, header precedence, per-request routing, original-body diagnostics, transport content-length handling, unchanged ciphertext and existing streaming/normalization. No unresolved code findings. Extracted configuration validation to meet the existing complexity limit and used typed test payload/stream reads to satisfy strict lint.
 - After the automatic `config.json` loading update: 61 config/route/dump regression tests passed, including discovery, explicit-path precedence, missing-file handling and invalid default files. Focused lint, typecheck and build passed. A direct loader check from the repository confirmed its local `config.json` enables `gpt-6-luna` without specifying a path.
+- At board closure: complete suite passed with 159 tests and 473 assertions. Compaction request/response logs now have distinct prefixes, including when the override is disabled; 31 route tests, focused lint, typecheck and build passed for that change. Route fixtures isolate package-root config discovery from the local enabled configuration.
 
 ## Live acceptance
 
@@ -36,4 +37,4 @@ Paired captures confirm the exact manual-compaction discriminator, original inco
 
 Completion evidence comes from Codex `turn/completed` with `status: completed` and correct original-model follow-up responses, rather than HTTP 200 alone. These synthetic histories do not establish compatibility for every prior incident's encrypted handoff payload or large production history.
 
-All isolated proxy/app-server processes were stopped after validation; local probe config remains disabled by default. Automatic compaction was not exercised live; detection is covered by synthetic metadata tests. Astra acceptance remains unavailable upstream; substituting the successfully tested GPT-6.1 Sol for that board requirement awaits the user's decision. No private dumps or credentials are committed.
+All isolated proxy/app-server processes were stopped after validation; local probe config remains disabled by default. Automatic compaction was not exercised live; detection is covered by synthetic metadata tests. On October 5, 2026, the user confirmed that compaction routing is verified, closing the live acceptance gate based on the successful Sol and GPT-6.1 Sol checks and user verification. Astra remains unavailable upstream and was not validated. No private dumps or credentials are committed.
